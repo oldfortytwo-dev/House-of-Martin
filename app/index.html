@@ -93,9 +93,14 @@
 
   /* Photos */
   .albumGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  .albumTile { border-radius: 12px; overflow: hidden; background: var(--card); border: 1px solid var(--border); }
-  .albumTile .thumb { height: 90px; background: var(--accent-soft); display: flex; align-items: center; justify-content: center; font-size: 26px; }
+  .albumTile { border-radius: 12px; overflow: hidden; background: var(--card); border: 1px solid var(--border); cursor: pointer; }
+  .albumTile .thumb { height: 90px; background: var(--accent-soft); background-size: cover; background-position: center; display: flex; align-items: center; justify-content: center; font-size: 26px; }
   .albumTile .lbl { padding: 8px 10px; font-size: 13px; font-weight: 600; }
+  .photoGrid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-top: 12px; }
+  .photoTile { position: relative; aspect-ratio: 1; border-radius: 8px; overflow: hidden; background: var(--accent-soft); }
+  .photoTile img { width: 100%; height: 100%; object-fit: cover; display: block; cursor: pointer; }
+  .photoTile .photoDel { position: absolute; top: 3px; right: 3px; background: rgba(0,0,0,.55); color: #fff; border: none; border-radius: 50%; width: 22px; height: 22px; font-size: 12px; cursor: pointer; line-height: 1; }
+  .uploadStatus { font-size: 13px; color: var(--ink-soft); margin-top: 8px; min-height: 16px; }
 
   .fab { position: fixed; right: 18px; bottom: calc(var(--nav-h) + 18px); width: 52px; height: 52px; border-radius: 50%; background: var(--accent); color: #fff; border: none; font-size: 26px; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,.25); }
 
@@ -257,6 +262,19 @@
     </div>
   </div>
 
+  <!-- Album detail modal -->
+  <div class="modalBg" id="albumDetailModalBg">
+    <div class="modalSheet">
+      <h3 id="adTitle">Album</h3>
+      <input type="file" id="photoFileInput" accept="image/*" style="display:none">
+      <button class="btn small" id="adAddPhotoBtn">📤 Add photo</button>
+      <div class="uploadStatus" id="adUploadStatus"></div>
+      <div class="photoGrid" id="adPhotoGrid"></div>
+      <div class="empty" id="adPhotoEmpty" style="display:none">No photos yet — add the first one.</div>
+      <button class="btn secondary" id="adCloseBtn">Close</button>
+    </div>
+  </div>
+
 </div>
 
 <script type="module">
@@ -266,9 +284,12 @@ import {
   signOut, connectAuthEmulator
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
 import {
-  getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection, addDoc, query, orderBy,
+  getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection, addDoc, query, orderBy, limit,
   onSnapshot, serverTimestamp, connectFirestoreEmulator, writeBatch
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+import {
+  getStorage, ref, uploadBytes, getDownloadURL, deleteObject, connectStorageEmulator
+} from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js';
 
 // ---- Firebase config ----
 // TODO: replace with the real House of Martin Firebase project config
@@ -286,9 +307,11 @@ const _isLocalDev = ['localhost', '127.0.0.1'].includes(location.hostname);
 const _fbApp = initializeApp(_fbConfig);
 const auth = getAuth(_fbApp);
 const db = getFirestore(_fbApp);
+const storage = getStorage(_fbApp);
 if (_isLocalDev) {
   connectAuthEmulator(auth, 'http://localhost:9099', { disableWarnings: true });
   connectFirestoreEmulator(db, 'localhost', 8080);
+  connectStorageEmulator(storage, 'localhost', 9199);
   console.log('✓ Connected to local emulators');
 }
 
@@ -300,7 +323,8 @@ let households = [], householdsById = {};
 let branches = [], branchesById = {};
 let usersById = {}, allApprovedUsers = [];
 let unsubMsgs = null, unsubEvents = null, unsubAlbums = null, unsubContacts = null, unsubPending = null,
-    unsubInvites = null, unsubHouseholds = null, unsubBranches = null;
+    unsubInvites = null, unsubHouseholds = null, unsubBranches = null, unsubPhotos = null;
+let _openAlbumId = null;
 
 // ---------- Auth screen wiring ----------
 const $ = id => document.getElementById(id);
@@ -382,8 +406,8 @@ function show(id) {
 }
 
 function cleanupListeners() {
-  [unsubMsgs, unsubEvents, unsubAlbums, unsubContacts, unsubPending, unsubInvites, unsubHouseholds, unsubBranches].forEach(u => u && u());
-  unsubMsgs = unsubEvents = unsubAlbums = unsubContacts = unsubPending = unsubInvites = unsubHouseholds = unsubBranches = null;
+  [unsubMsgs, unsubEvents, unsubAlbums, unsubContacts, unsubPending, unsubInvites, unsubHouseholds, unsubBranches, unsubPhotos].forEach(u => u && u());
+  unsubMsgs = unsubEvents = unsubAlbums = unsubContacts = unsubPending = unsubInvites = unsubHouseholds = unsubBranches = unsubPhotos = null;
 }
 
 // ---------- Tab nav ----------
@@ -628,13 +652,86 @@ function initAlbums() {
     grid.innerHTML = '';
     $('albumEmpty').style.display = snap.empty ? 'block' : 'none';
     snap.forEach(d => {
-      const a = d.data();
+      const a = { id: d.id, ...d.data() };
       const tile = document.createElement('div');
       tile.className = 'albumTile';
-      tile.innerHTML = `<div class="thumb">📷</div><div class="lbl">${escapeHtml(a.title)}</div>`;
+      tile.innerHTML = `<div class="thumb" id="cover-${a.id}">📷</div><div class="lbl">${escapeHtml(a.title)}</div>`;
+      tile.onclick = () => openAlbum(a.id, a.title);
+      grid.appendChild(tile);
+      // Small family-scale app — one extra listener per album tile on each albums-collection
+      // change is a non-issue at this scale, so no need to track/unsubscribe them individually.
+      onSnapshot(query(collection(db, 'albums', a.id, 'photos'), orderBy('createdAt', 'desc'), limit(1)), (pSnap) => {
+        const cover = document.getElementById(`cover-${a.id}`);
+        if (!cover || pSnap.empty) return;
+        cover.style.backgroundImage = `url(${pSnap.docs[0].data().url})`;
+        cover.textContent = '';
+      });
+    });
+  });
+}
+
+function openAlbum(albumId, title) {
+  _openAlbumId = albumId;
+  $('adTitle').textContent = title;
+  $('adUploadStatus').textContent = '';
+  $('albumDetailModalBg').classList.add('open');
+  if (unsubPhotos) unsubPhotos();
+  const q = query(collection(db, 'albums', albumId, 'photos'), orderBy('createdAt', 'desc'));
+  unsubPhotos = onSnapshot(q, (snap) => {
+    const grid = $('adPhotoGrid');
+    grid.innerHTML = '';
+    $('adPhotoEmpty').style.display = snap.empty ? 'block' : 'none';
+    snap.forEach(d => {
+      const p = d.data();
+      const canDelete = p.uploaderId === currentUser.uid || myDoc.role === 'admin';
+      const tile = document.createElement('div');
+      tile.className = 'photoTile';
+      tile.innerHTML = `<img src="${p.url}" alt="">${canDelete ? '<button class="photoDel">×</button>' : ''}`;
+      tile.querySelector('img').onclick = () => window.open(p.url, '_blank');
+      if (canDelete) {
+        tile.querySelector('.photoDel').onclick = async (e) => {
+          e.stopPropagation();
+          if (!confirm('Delete this photo?')) return;
+          await deleteDoc(doc(db, 'albums', albumId, 'photos', d.id));
+          if (p.storagePath) {
+            try { await deleteObject(ref(storage, p.storagePath)); } catch (err) { console.warn('Storage delete failed', err); }
+          }
+        };
+      }
       grid.appendChild(tile);
     });
   });
+}
+
+$('adCloseBtn').onclick = () => {
+  $('albumDetailModalBg').classList.remove('open');
+  if (unsubPhotos) unsubPhotos();
+  unsubPhotos = null;
+  _openAlbumId = null;
+};
+
+$('adAddPhotoBtn').onclick = () => $('photoFileInput').click();
+$('photoFileInput').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (file && _openAlbumId) await uploadPhotoToAlbum(_openAlbumId, file);
+});
+
+async function uploadPhotoToAlbum(albumId, file) {
+  $('adUploadStatus').textContent = 'Uploading…';
+  try {
+    const photoDocRef = doc(collection(db, 'albums', albumId, 'photos'));
+    const storagePath = `albums/${albumId}/${photoDocRef.id}_${file.name}`;
+    const sRef = ref(storage, storagePath);
+    await uploadBytes(sRef, file, { customMetadata: { uploaderId: currentUser.uid } });
+    const url = await getDownloadURL(sRef);
+    await setDoc(photoDocRef, {
+      url, storagePath, uploaderId: currentUser.uid, uploaderName: myDoc.name, createdAt: serverTimestamp()
+    });
+    $('adUploadStatus').textContent = '';
+  } catch (err) {
+    $('adUploadStatus').textContent = 'Upload failed: ' + (err.message || err);
+  }
 }
 
 // ---------- Households / Branches (live for everyone; admin also gets edit UI) ----------

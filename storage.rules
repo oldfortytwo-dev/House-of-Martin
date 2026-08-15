@@ -1,0 +1,37 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function me() {
+      return firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isApprovedMember() {
+      return isSignedIn() && me().status == 'approved' && me().role in ['member', 'admin'];
+    }
+
+    function isAdmin() {
+      return isSignedIn() && me().status == 'approved' && me().role == 'admin';
+    }
+
+    function isFriendInvitedToAlbum(albumId) {
+      return isSignedIn() && me().status == 'approved' && me().role == 'friend' &&
+        firestore.exists(/databases/(default)/documents/albums/$(albumId)) &&
+        request.auth.uid in firestore.get(/databases/(default)/documents/albums/$(albumId)).data.invitedUserIds;
+    }
+
+    match /albums/{albumId}/{fileName} {
+      allow read: if isApprovedMember() || isFriendInvitedToAlbum(albumId);
+      allow create: if (isApprovedMember() || isFriendInvitedToAlbum(albumId))
+        && request.resource.size < 15 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+      // Only the uploader (tracked via custom metadata set at upload time) or an admin may delete.
+      allow delete: if isSignedIn() && (isAdmin() || resource.metadata.uploaderId == request.auth.uid);
+    }
+  }
+}
