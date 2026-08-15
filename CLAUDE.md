@@ -21,45 +21,77 @@ the `auggies-deploy` repo). Mobile-first, installable as a PWA.
 
 | File | Purpose |
 |---|---|
-| `app/index.html` | The entire app shell — auth, nav, all tabs (Messages/Events/Contacts/Photos) |
-| `firebase.json` | Hosting + Firestore config |
-| `firestore.rules` | Security rules |
-| `.firebaserc` | Project alias — **placeholder, needs a real Firebase project ID** |
+| `app/index.html` | The entire app shell — auth, nav, all tabs (Messages/Events/Contacts/Photos/Admin) |
+| `firebase.json` | Hosting + Firestore + Storage config, plus emulator ports |
+| `firestore.rules` | Firestore security rules |
+| `storage.rules` | Cloud Storage security rules (photo uploads) — see gotcha below |
+| `.firebaserc` | Project alias, points at the real `house-of-martin` project |
 
 ## Firebase Project
 
-**Not yet created.** To stand up the backend:
-1. `firebase projects:create house-of-martin` (or create via console.firebase.google.com)
-2. Update `.firebaserc` with the real project ID
-3. Enable Firestore + Authentication (Email Link or Phone) in the Firebase console
-4. `firebase deploy --only firestore:rules,hosting`
+**Live.** Project ID `house-of-martin`, Firestore (nam5) + Auth (Email/Password) +
+Storage all created and enabled. Deploy with:
+```bash
+firebase deploy --only firestore:rules,storage,hosting --project house-of-martin
+```
+Bootstrapping a brand-new environment from scratch (new project) needs two one-time
+manual console steps the CLI can't do: enabling Email/Password sign-in under
+Authentication → Providers, and clicking "Get Started" on the Storage tab (may
+prompt to upgrade to the Blaze plan — required for Storage, free tier is generous
+enough for a family app). Firestore itself auto-enables via `firebase deploy`.
+
+First admin bootstrap is also manual (chicken-and-egg: signup needs an invite code,
+invite codes need an admin to create them): manually add one `inviteCodes/{code}`
+doc with `role: "admin"` via the Firestore console, sign up with it, then manually
+flip that user's `status` from `pending` to `approved` in the console. Every
+account after that goes through the normal in-app invite-code + admin-approval flow.
+
+## Known gotcha: don't use cross-service Storage↔Firestore rules
+
+`storage.rules` does **not** use `firestore.get()`/`firestore.exists()` to check a
+user's role/approval status, even though that's the "correct-looking" way to gate
+Storage access on Firestore-held state. It was tried for photo uploads and failed
+with `storage/unauthorized` for a legitimately approved admin account, for reasons
+that didn't reproduce with a plain `request.auth != null` rule (isolated by
+temporarily deploying that permissive rule and confirming it worked immediately).
+Rather than sink more time into an unreliable cross-product feature, Storage rules
+are intentionally just "signed in," relying on `firestore.rules` (which works
+reliably) to gate *metadata* visibility — an unapproved/uninvited account can never
+learn the random album/photo path needed to reach a Storage object directly. If a
+future session is tempted to "properly" restrict Storage by role again, know that
+this was already tried and abandoned for a working reason, not skipped out of
+laziness.
 
 ## Data Model
 
-- **User**: id, name, email/phone, role (member/friend/admin), household_id
-- **Household**: id, name, member_ids[], responder_id (who can RSVP for the household), shared contact fields
-- **Branch**: id, name, household_ids[], parent_branch_id (optional)
-- **Channel**: id, name, type (family-wide/branch/household/DM/event-linked), member_ids[]
-- **Message**: id, channel_id, sender_id, content, attachments[], timestamp
-- **Event**: id, title, date/time, location, host_id, invited (branch_ids/household_ids/user_ids), item sign-up list
-- **RSVP**: event_id, responder_id (user or household), status (yes/no/maybe), headcount, submitted_by
-- **Album**: id, title, linked_event_id (optional), visibility scope (family/branch/event-invitees)
-- **Photo**: id, album_id, uploader_id, url, caption, comments[]
+- **User** (`users/{uid}`): name, email, phone, birthdate (age shown publicly only if ≤21),
+  role (member/friend/admin), status (pending/approved), householdId, inviteCodeUsed
+- **Household** (`households/{id}`): name, memberIds[], responderId (RSVPs/edits for the household), phone, address
+- **Branch** (`branches/{id}`): name, householdIds[]
+- **InviteCode** (`inviteCodes/{code}`): role (what new signups using this code become)
+- **Channel** (`channels/{id}`): name, type (family/household/branch), householdId or branchId, invitedUserIds[] (friends)
+  - `messages` subcollection: text, senderId, senderName, createdAt
+- **Event** (`events/{id}`): title, when, where, hostId, hostName, invitedUserIds[]
+  - `rsvps` subcollection, keyed by member uid: status, submittedBy, name, householdId, viaHousehold
+- **Album** (`albums/{id}`): title, createdBy, visibility, invitedUserIds[] (friends)
+  - `photos` subcollection: url, storagePath, uploaderId, uploaderName, createdAt
 
 ## Roles & Privacy
 
-- **Admin**: approve members/friends, manage branches/households, moderate, full visibility
-- **Member**: full access to family channels, directory, events, photos; can RSVP for self or household (if responder)
-- **Family friend**: access limited to specific invited channels/events only — no full directory, no unrelated content
+- **Admin**: approve members/friends, manage households/branches, generate invite codes, full visibility
+- **Member**: full access to family/household/branch channels, directory, events, photos; can RSVP for self or household (if responder)
+- **Family friend**: access limited to specific invited channels/events/albums only — no full directory, no unrelated content
 
-## MVP Scope (Phase 1)
+## MVP Scope (Phase 1) — status
 
-Invite-only signup/approval, households/branches, messaging (family + branch + DMs),
-events + RSVP (individual and household-level), contacts directory, basic photo
-upload tied to events.
+**Built:** invite-code-gated signup + admin approval, households/branches with
+"respond as a family" RSVP, family/household/branch messaging channels, event
+RSVP with live counts, contacts directory grouped by household, real photo
+upload to Storage, age badges (≤21) with self/admin-editable birthdate.
 
-**Deferred:** family tree view, potluck/item sign-up lists, notification digests,
-native apps, photo tagging, polls.
+**Deferred:** DM channels, household self-service editing of shared contact info
+(currently admin-only), notification digests, family tree view, item sign-up
+lists, native app wrapper.
 
 ## Working Style / Preferences
 
