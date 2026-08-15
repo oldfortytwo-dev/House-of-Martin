@@ -62,14 +62,14 @@ Firestore/Auth calls from `http://localhost:8123` will hit the emulators
   extension of the same `channels/{id}/messages` pattern — not yet exposed in the UI)
 - Event creation + per-person RSVP (yes/maybe/no) with live counts, plus a
   "respond as a family" action for the household's designated responder
-- Contacts directory grouped by household, showing shared household phone/address
-  and a responder badge
-- Basic photo albums (creation + listing; actual photo upload to Storage is not
-  yet wired up)
+- Contacts directory grouped by household, showing shared household phone/address,
+  a responder badge, and an "Age N" badge for members 21 or under (self/admin-editable)
+- Photo albums with real upload to Firebase Storage: tap an album to open it, add
+  photos, tap a photo to view full-size, delete your own (or, if admin, anyone's)
 - Admin tab: approve pending members, generate invite codes, manage households/branches
 
 ## Not yet built (see `CLAUDE.md` roadmap)
 
 Household self-service editing of shared contact info (currently admin-only),
-DM channels, actual photo upload (Firebase Storage), notification digests, editable
-own-contact-info, family tree view, item sign-up lists, native app wrapper.
+DM channels, notification digests, family tree view, item sign-up lists,
+native app wrapper.
