@@ -77,6 +77,17 @@
   .contactRow .nm { font-weight: 600; font-size: 14px; }
   .contactRow .hh { font-size: 12px; color: var(--ink-soft); }
   .contactRow .info { font-size: 13px; color: var(--ink-soft); text-align: right; }
+  .hhHeader { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-weight: 700; font-size: 13px; color: var(--accent); padding: 14px 0 4px; border-top: 1px solid var(--border); }
+  .hhHeader:first-child { border-top: none; padding-top: 0; }
+  .hhHeader .hh { font-weight: 400; }
+  .respBadge { font-size: 10px; background: var(--accent-soft); color: var(--accent); padding: 2px 6px; border-radius: 8px; margin-left: 6px; font-weight: 600; vertical-align: middle; }
+
+  /* Households / Branches admin */
+  .hhEditor { border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-bottom: 10px; }
+  .hhEditor .nm { font-weight: 600; font-size: 14px; }
+  .chkGroup { display: flex; flex-direction: column; gap: 6px; max-height: 160px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; padding: 8px; margin-top: 6px; }
+  .chk { font-size: 13px; display: flex; align-items: center; gap: 6px; }
+  .hhRsvpBlock { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border); }
 
   /* Photos */
   .albumGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -176,6 +187,19 @@
           <button class="btn small" id="createInviteBtn">Create invite code</button>
           <div id="inviteList" style="margin-top:12px"></div>
         </div>
+        <div class="card">
+          <h3 style="margin-top:0">Households</h3>
+          <div class="field"><input type="text" id="newHouseholdName" placeholder="e.g. The Alvarez-Martins"></div>
+          <button class="btn small" id="createHouseholdBtn">Create household</button>
+          <div id="householdList" style="margin-top:12px"></div>
+        </div>
+        <div class="card">
+          <h3 style="margin-top:0">Branches</h3>
+          <div class="field"><label>Name</label><input type="text" id="newBranchName" placeholder="e.g. Descendants of Grandpa Joe"></div>
+          <div class="field"><label>Households in this branch</label><div id="branchHouseholdPicker" class="chkGroup"></div></div>
+          <button class="btn small" id="createBranchBtn">Create branch</button>
+          <div id="branchList" style="margin-top:12px"></div>
+        </div>
       </section>
     </main>
 
@@ -228,8 +252,8 @@ import {
   signOut, connectAuthEmulator
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
 import {
-  getFirestore, doc, getDoc, setDoc, updateDoc, collection, addDoc, query, orderBy,
-  onSnapshot, serverTimestamp, connectFirestoreEmulator
+  getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection, addDoc, query, orderBy,
+  onSnapshot, serverTimestamp, connectFirestoreEmulator, writeBatch
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 
 // ---- Firebase config ----
@@ -256,8 +280,13 @@ if (_isLocalDev) {
 
 let currentUser = null;   // Firebase Auth user
 let myDoc = null;         // Firestore users/{uid} doc data
+let myHouseholdDoc = null; // Firestore households/{myDoc.householdId} doc data, cached
 let activeChannelId = 'family';
-let unsubMsgs = null, unsubEvents = null, unsubAlbums = null, unsubContacts = null, unsubPending = null, unsubInvites = null;
+let households = [], householdsById = {};
+let branches = [], branchesById = {};
+let usersById = {}, allApprovedUsers = [];
+let unsubMsgs = null, unsubEvents = null, unsubAlbums = null, unsubContacts = null, unsubPending = null,
+    unsubInvites = null, unsubHouseholds = null, unsubBranches = null;
 
 // ---------- Auth screen wiring ----------
 const $ = id => document.getElementById(id);
@@ -324,6 +353,8 @@ onAuthStateChanged(auth, async (user) => {
   show('shell');
   $('whoami').textContent = `${myDoc.name} · ${myDoc.role}`;
   $('adminTabBtn').style.display = myDoc.role === 'admin' ? 'flex' : 'none';
+  initHouseholds();
+  initBranches();
   initChannels();
   initEvents();
   initAlbums();
@@ -336,8 +367,8 @@ function show(id) {
 }
 
 function cleanupListeners() {
-  [unsubMsgs, unsubEvents, unsubAlbums, unsubContacts, unsubPending, unsubInvites].forEach(u => u && u());
-  unsubMsgs = unsubEvents = unsubAlbums = unsubContacts = unsubPending = unsubInvites = null;
+  [unsubMsgs, unsubEvents, unsubAlbums, unsubContacts, unsubPending, unsubInvites, unsubHouseholds, unsubBranches].forEach(u => u && u());
+  unsubMsgs = unsubEvents = unsubAlbums = unsubContacts = unsubPending = unsubInvites = unsubHouseholds = unsubBranches = null;
 }
 
 // ---------- Tab nav ----------
@@ -356,21 +387,30 @@ $('msgComposer').style.display = 'flex';
 
 // ---------- Messages ----------
 function initChannels() {
+  renderChannelList();
+  loadMessages();
+}
+
+function renderChannelList() {
   $('channelList').innerHTML = '';
   const chBtn = (id, label) => {
     const b = document.createElement('button');
     b.textContent = label;
+    b.dataset.id = id;
     b.className = id === activeChannelId ? 'active' : '';
-    b.onclick = () => { activeChannelId = id; initChannels(); loadMessages(); };
+    b.onclick = () => { activeChannelId = id; renderChannelList(); loadMessages(); };
     return b;
   };
   $('channelList').appendChild(chBtn('family', 'Whole Family'));
-  loadMessages();
+  if (myHouseholdDoc) $('channelList').appendChild(chBtn('hh_' + myHouseholdDoc.id, '🏠 ' + myHouseholdDoc.name));
+  if (myDoc.householdId) {
+    branches.filter(b => (b.householdIds || []).includes(myDoc.householdId))
+      .forEach(b => $('channelList').appendChild(chBtn('br_' + b.id, '🌳 ' + b.name)));
+  }
 }
 
 function loadMessages() {
   if (unsubMsgs) unsubMsgs();
-  document.querySelectorAll('#channelList button').forEach(b => b.classList.toggle('active', b.textContent === (activeChannelId === 'family' ? 'Whole Family' : '')));
   const q = query(collection(db, 'channels', activeChannelId, 'messages'), orderBy('createdAt', 'asc'));
   unsubMsgs = onSnapshot(q, (snap) => {
     const list = $('msgList');
@@ -401,9 +441,20 @@ async function sendMessage() {
 async function ensureChannelDoc(id) {
   const ref = doc(db, 'channels', id);
   const snap = await getDoc(ref);
-  if (!snap.exists()) {
-    await setDoc(ref, { name: id === 'family' ? 'Whole Family' : id, type: 'family-wide', invitedUserIds: [], createdAt: serverTimestamp() });
+  if (snap.exists()) return;
+  let payload = { invitedUserIds: [], createdAt: serverTimestamp() };
+  if (id === 'family') {
+    payload = { ...payload, name: 'Whole Family', type: 'family' };
+  } else if (id.startsWith('hh_')) {
+    const hhId = id.slice(3);
+    payload = { ...payload, name: householdsById[hhId] ? householdsById[hhId].name : 'Household', type: 'household', householdId: hhId };
+  } else if (id.startsWith('br_')) {
+    const brId = id.slice(3);
+    payload = { ...payload, name: branchesById[brId] ? branchesById[brId].name : 'Branch', type: 'branch', branchId: brId };
+  } else {
+    payload = { ...payload, name: id, type: 'family' };
   }
+  await setDoc(ref, payload);
 }
 
 // ---------- Events ----------
@@ -438,56 +489,108 @@ function renderEventCard(id, ev, container) {
   const card = document.createElement('div');
   card.className = 'card eventCard';
   const whenStr = ev.when ? new Date(ev.when).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : 'Date TBD';
+  const isResponder = !!(myHouseholdDoc && myHouseholdDoc.responderId === currentUser.uid);
   card.innerHTML = `
     <h3>${escapeHtml(ev.title)}</h3>
     <div class="when">${whenStr}${ev.where ? ' · ' + escapeHtml(ev.where) : ''}</div>
     <div class="when">Hosted by ${escapeHtml(ev.hostName || '')}</div>
-    <div class="rsvpRow" data-eid="${id}">
+    <div class="rsvpRow rsvpMine" data-eid="${id}">
       <button data-status="yes">✅ Yes</button>
       <button data-status="maybe">🤔 Maybe</button>
       <button data-status="no">❌ No</button>
     </div>
+    ${isResponder ? `
+    <div class="hhRsvpBlock">
+      <div class="hh">RSVP for the whole ${escapeHtml(myHouseholdDoc.name)} household:</div>
+      <div class="rsvpRow hhRsvpRow">
+        <button data-status="yes">✅ All Yes</button>
+        <button data-status="maybe">🤔 Maybe</button>
+        <button data-status="no">❌ Can't make it</button>
+      </div>
+    </div>` : ''}
     <div class="rsvpCount" id="rc-${id}"></div>
   `;
   container.appendChild(card);
 
-  card.querySelectorAll('.rsvpRow button').forEach(btn => {
+  card.querySelectorAll('.rsvpMine button').forEach(btn => {
     btn.onclick = async () => {
       await setDoc(doc(db, 'events', id, 'rsvps', currentUser.uid), {
         status: btn.dataset.status, submittedBy: currentUser.uid, name: myDoc.name,
-        householdId: myDoc.householdId || null, updatedAt: serverTimestamp()
+        householdId: myDoc.householdId || null, viaHousehold: false, updatedAt: serverTimestamp()
       });
     };
   });
+
+  if (isResponder) {
+    card.querySelectorAll('.hhRsvpRow button').forEach(btn => {
+      btn.onclick = () => rsvpHousehold(id, btn.dataset.status);
+    });
+  }
 
   onSnapshot(collection(db, 'events', id, 'rsvps'), (snap) => {
     const counts = { yes: 0, maybe: 0, no: 0 };
     let mine = null;
     snap.forEach(r => { const s = r.data().status; if (counts[s] !== undefined) counts[s]++; if (r.id === currentUser.uid) mine = s; });
-    card.querySelectorAll('.rsvpRow button').forEach(b => b.classList.toggle('picked', b.dataset.status === mine));
+    card.querySelectorAll('.rsvpMine button').forEach(b => b.classList.toggle('picked', b.dataset.status === mine));
     const rc = card.querySelector(`#rc-${id}`);
     if (rc) rc.textContent = `${counts.yes} going · ${counts.maybe} maybe · ${counts.no} can't make it`;
   });
+}
+
+async function rsvpHousehold(eventId, status) {
+  if (!myHouseholdDoc) return;
+  const batch = writeBatch(db);
+  (myHouseholdDoc.memberIds || []).forEach(uid => {
+    const u = usersById[uid];
+    batch.set(doc(db, 'events', eventId, 'rsvps', uid), {
+      status, submittedBy: currentUser.uid, name: u ? u.name : '(household member)',
+      householdId: myHouseholdDoc.id, viaHousehold: true, updatedAt: serverTimestamp()
+    });
+  });
+  await batch.commit();
 }
 
 // ---------- Contacts ----------
 function initContacts() {
   const q = query(collection(db, 'users'), orderBy('name', 'asc'));
   unsubContacts = onSnapshot(q, (snap) => {
-    const wrap = $('contactList');
-    wrap.innerHTML = '';
+    usersById = {};
+    allApprovedUsers = [];
     snap.forEach(d => {
-      const u = d.data();
-      if (u.status !== 'approved') return;
-      const row = document.createElement('div');
-      row.className = 'contactRow';
-      row.innerHTML = `
-        <div><div class="nm">${escapeHtml(u.name)}</div><div class="hh">${escapeHtml(u.householdId || 'No household set')}</div></div>
-        <div class="info">${escapeHtml(u.email || '')}${u.phone ? '<br>' + escapeHtml(u.phone) : ''}</div>
-      `;
-      wrap.appendChild(row);
+      const u = { id: d.id, ...d.data() };
+      usersById[d.id] = u;
+      if (u.status === 'approved') allApprovedUsers.push(u);
     });
+    myHouseholdDoc = myDoc.householdId ? (householdsById[myDoc.householdId] || null) : null;
+    renderContacts();
+    renderChannelList();
+    if (myDoc.role === 'admin') renderHouseholdsAdmin();
   });
+}
+
+function renderContacts() {
+  const wrap = $('contactList');
+  if (!allApprovedUsers.length) { wrap.innerHTML = '<div class="empty">No approved members yet.</div>'; return; }
+
+  const byHousehold = {};
+  allApprovedUsers.forEach(u => {
+    const key = (u.householdId && householdsById[u.householdId]) ? u.householdId : 'none';
+    (byHousehold[key] = byHousehold[key] || []).push(u);
+  });
+  const orderedKeys = [...households.map(h => h.id).filter(id => byHousehold[id]), ...(byHousehold['none'] ? ['none'] : [])];
+
+  wrap.innerHTML = orderedKeys.map(key => {
+    const hh = key !== 'none' ? householdsById[key] : null;
+    const contactLine = hh && (hh.phone || hh.address)
+      ? `<span class="hh">${escapeHtml(hh.phone || '')}${hh.phone && hh.address ? ' · ' : ''}${escapeHtml(hh.address || '')}</span>` : '';
+    const header = `<div class="hhHeader"><span>${hh ? '🏠 ' + escapeHtml(hh.name) : 'No household set'}</span>${contactLine}</div>`;
+    const rows = byHousehold[key].map(u => `
+      <div class="contactRow">
+        <div><div class="nm">${escapeHtml(u.name)}${hh && hh.responderId === u.id ? '<span class="respBadge">responder</span>' : ''}</div></div>
+        <div class="info">${escapeHtml(u.email || '')}${u.phone ? '<br>' + escapeHtml(u.phone) : ''}</div>
+      </div>`).join('');
+    return header + rows;
+  }).join('');
 }
 
 // ---------- Photos / Albums ----------
@@ -515,6 +618,126 @@ function initAlbums() {
       tile.innerHTML = `<div class="thumb">📷</div><div class="lbl">${escapeHtml(a.title)}</div>`;
       grid.appendChild(tile);
     });
+  });
+}
+
+// ---------- Households / Branches (live for everyone; admin also gets edit UI) ----------
+function initHouseholds() {
+  unsubHouseholds = onSnapshot(collection(db, 'households'), (snap) => {
+    households = []; householdsById = {};
+    snap.forEach(d => { const h = { id: d.id, ...d.data() }; households.push(h); householdsById[d.id] = h; });
+    households.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    myHouseholdDoc = myDoc.householdId ? (householdsById[myDoc.householdId] || null) : null;
+    renderContacts();
+    renderChannelList();
+    if (myDoc.role === 'admin') renderHouseholdsAdmin();
+  });
+}
+
+function initBranches() {
+  unsubBranches = onSnapshot(collection(db, 'branches'), (snap) => {
+    branches = []; branchesById = {};
+    snap.forEach(d => { const b = { id: d.id, ...d.data() }; branches.push(b); branchesById[d.id] = b; });
+    branches.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    renderChannelList();
+    if (myDoc.role === 'admin') renderBranchesAdmin();
+  });
+}
+
+$('createHouseholdBtn').onclick = async () => {
+  const name = $('newHouseholdName').value.trim();
+  if (!name) return;
+  await addDoc(collection(db, 'households'), { name, memberIds: [], responderId: null, phone: '', address: '', createdBy: currentUser.uid, createdAt: serverTimestamp() });
+  $('newHouseholdName').value = '';
+};
+
+function renderHouseholdsAdmin() {
+  const wrap = $('householdList');
+  if (!households.length) { wrap.innerHTML = '<div class="empty">No households yet.</div>'; return; }
+  wrap.innerHTML = '';
+  households.forEach(hh => {
+    const box = document.createElement('div');
+    box.className = 'hhEditor';
+    const memberOptions = allApprovedUsers.map(u => {
+      const checked = (hh.memberIds || []).includes(u.id) ? 'checked' : '';
+      return `<label class="chk"><input type="checkbox" value="${u.id}" ${checked}> ${escapeHtml(u.name)}</label>`;
+    }).join('') || '<span class="hh">No approved members yet</span>';
+    const responderOptions = (hh.memberIds || []).map(uid => {
+      const u = usersById[uid];
+      return `<option value="${uid}" ${hh.responderId === uid ? 'selected' : ''}>${escapeHtml(u ? u.name : uid)}</option>`;
+    }).join('') || '<option value="">— add &amp; save members first —</option>';
+    box.innerHTML = `
+      <div class="nm">${escapeHtml(hh.name)}</div>
+      <div class="chkGroup">${memberOptions}</div>
+      <div class="field" style="margin-top:8px"><label>Responds for household (RSVPs/edits shared info)</label>
+        <select class="hhResponder">${responderOptions}</select>
+      </div>
+      <div style="display:flex; gap:8px; margin-top:8px">
+        <button class="btn small hhSave">Save members</button>
+        <button class="btn secondary small hhDelete">Delete household</button>
+      </div>
+    `;
+    box.querySelector('.hhSave').onclick = async () => {
+      const selected = Array.from(box.querySelectorAll('.chkGroup input[type=checkbox]:checked')).map(c => c.value);
+      const responderChoice = box.querySelector('.hhResponder').value || null;
+      const responderId = selected.includes(responderChoice) ? responderChoice : (selected[0] || null);
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'households', hh.id), { memberIds: selected, responderId });
+      (hh.memberIds || []).filter(uid => !selected.includes(uid)).forEach(uid => batch.update(doc(db, 'users', uid), { householdId: null }));
+      selected.forEach(uid => batch.update(doc(db, 'users', uid), { householdId: hh.id }));
+      await batch.commit();
+    };
+    box.querySelector('.hhDelete').onclick = async () => {
+      if (!confirm(`Delete household "${hh.name}"? Members keep their accounts but lose the household link.`)) return;
+      const batch = writeBatch(db);
+      (hh.memberIds || []).forEach(uid => batch.update(doc(db, 'users', uid), { householdId: null }));
+      batch.delete(doc(db, 'households', hh.id));
+      await batch.commit();
+    };
+    wrap.appendChild(box);
+  });
+}
+
+$('createBranchBtn').onclick = async () => {
+  const name = $('newBranchName').value.trim();
+  if (!name) return;
+  const selected = Array.from(document.querySelectorAll('.brNewHH:checked')).map(c => c.value);
+  await addDoc(collection(db, 'branches'), { name, householdIds: selected, createdBy: currentUser.uid, createdAt: serverTimestamp() });
+  $('newBranchName').value = '';
+};
+
+function renderBranchesAdmin() {
+  $('branchHouseholdPicker').innerHTML = households.map(h =>
+    `<label class="chk"><input type="checkbox" class="brNewHH" value="${h.id}"> ${escapeHtml(h.name)}</label>`
+  ).join('') || '<span class="hh">Create a household first</span>';
+
+  const wrap = $('branchList');
+  if (!branches.length) { wrap.innerHTML = '<div class="empty">No branches yet.</div>'; return; }
+  wrap.innerHTML = '';
+  branches.forEach(br => {
+    const box = document.createElement('div');
+    box.className = 'hhEditor';
+    const hhOptions = households.map(h => {
+      const checked = (br.householdIds || []).includes(h.id) ? 'checked' : '';
+      return `<label class="chk"><input type="checkbox" value="${h.id}" ${checked}> ${escapeHtml(h.name)}</label>`;
+    }).join('') || '<span class="hh">No households yet</span>';
+    box.innerHTML = `
+      <div class="nm">${escapeHtml(br.name)}</div>
+      <div class="chkGroup">${hhOptions}</div>
+      <div style="display:flex; gap:8px; margin-top:8px">
+        <button class="btn small brSave">Save households</button>
+        <button class="btn secondary small brDelete">Delete branch</button>
+      </div>
+    `;
+    box.querySelector('.brSave').onclick = async () => {
+      const selected = Array.from(box.querySelectorAll('.chkGroup input[type=checkbox]:checked')).map(c => c.value);
+      await updateDoc(doc(db, 'branches', br.id), { householdIds: selected });
+    };
+    box.querySelector('.brDelete').onclick = async () => {
+      if (!confirm(`Delete branch "${br.name}"?`)) return;
+      await deleteDoc(doc(db, 'branches', br.id));
+    };
+    wrap.appendChild(box);
   });
 }
 
