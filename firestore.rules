@@ -47,7 +47,11 @@ service cloud.firestore {
     }
 
     match /inviteCodes/{codeId} {
-      allow read: if signedIn(); // needed to validate a code pre-approval
+      // get (fetch by known code) must be public — signup validates the code
+      // *before* the account exists, so request.auth is still null at that point.
+      // list stays admin-only so codes can't be enumerated.
+      allow get: if true;
+      allow list: if isAdmin();
       allow write: if isAdmin();
     }
 
