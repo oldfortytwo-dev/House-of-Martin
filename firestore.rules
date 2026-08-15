@@ -1,0 +1,93 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function me() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isApprovedMember() {
+      return signedIn() && me().status == 'approved' && me().role in ['member', 'admin'];
+    }
+
+    function isAdmin() {
+      return signedIn() && me().status == 'approved' && me().role == 'admin';
+    }
+
+    function isFriendInvitedTo(channelOrEventId, kind) {
+      return signedIn() && me().status == 'approved' && me().role == 'friend' &&
+        exists(/databases/$(database)/documents/$(kind)/$(channelOrEventId)) &&
+        request.auth.uid in get(/databases/$(database)/documents/$(kind)/$(channelOrEventId)).data.invitedUserIds;
+    }
+
+    // Users can read their own doc and (once approved) the roster; only admins edit roles/status.
+    match /users/{userId} {
+      allow read: if signedIn() && (request.auth.uid == userId || isApprovedMember());
+      allow create: if signedIn() && request.auth.uid == userId; // self-provision on invite redemption
+      allow update: if signedIn() && (
+        (request.auth.uid == userId && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'status'])) ||
+        isAdmin()
+      );
+      allow delete: if isAdmin();
+    }
+
+    match /households/{householdId} {
+      allow read: if isApprovedMember();
+      allow write: if isAdmin() || (isApprovedMember() && request.auth.uid == resource.data.responderId);
+    }
+
+    match /branches/{branchId} {
+      allow read: if isApprovedMember();
+      allow write: if isAdmin();
+    }
+
+    match /inviteCodes/{codeId} {
+      allow read: if signedIn(); // needed to validate a code pre-approval
+      allow write: if isAdmin();
+    }
+
+    match /channels/{channelId} {
+      allow read: if isApprovedMember() || isFriendInvitedTo(channelId, 'channels');
+      allow create: if isApprovedMember();
+      allow update, delete: if isAdmin();
+
+      match /messages/{messageId} {
+        allow read: if isApprovedMember() || isFriendInvitedTo(channelId, 'channels');
+        allow create: if (isApprovedMember() || isFriendInvitedTo(channelId, 'channels'))
+          && request.resource.data.senderId == request.auth.uid;
+        allow update, delete: if signedIn() && resource.data.senderId == request.auth.uid;
+      }
+    }
+
+    match /events/{eventId} {
+      allow read: if isApprovedMember() || isFriendInvitedTo(eventId, 'events');
+      allow create: if isApprovedMember();
+      allow update: if isApprovedMember() && (resource.data.hostId == request.auth.uid || isAdmin());
+      allow delete: if isAdmin() || (isApprovedMember() && resource.data.hostId == request.auth.uid);
+
+      match /rsvps/{rsvpId} {
+        allow read: if isApprovedMember() || isFriendInvitedTo(eventId, 'events');
+        allow write: if (isApprovedMember() || isFriendInvitedTo(eventId, 'events'))
+          && request.resource.data.submittedBy == request.auth.uid;
+      }
+    }
+
+    match /albums/{albumId} {
+      allow read: if isApprovedMember() || isFriendInvitedTo(albumId, 'albums');
+      allow create: if isApprovedMember();
+      allow update, delete: if isAdmin() || (isApprovedMember() && resource.data.createdBy == request.auth.uid);
+
+      match /photos/{photoId} {
+        allow read: if isApprovedMember() || isFriendInvitedTo(albumId, 'albums');
+        allow create: if (isApprovedMember() || isFriendInvitedTo(albumId, 'albums'))
+          && request.resource.data.uploaderId == request.auth.uid;
+        allow update, delete: if signedIn() && (resource.data.uploaderId == request.auth.uid || isAdmin());
+      }
+    }
+  }
+}
