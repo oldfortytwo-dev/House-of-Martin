@@ -404,7 +404,7 @@ import {
   signOut, connectAuthEmulator
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
 import {
-  getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection, addDoc, query, orderBy, limit,
+  getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection, addDoc, query, orderBy, limit, where,
   onSnapshot, serverTimestamp, connectFirestoreEmulator, writeBatch
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import {
@@ -443,8 +443,10 @@ let households = [], householdsById = {};
 let branches = [], branchesById = {};
 let usersById = {}, allApprovedUsers = [];
 let occasions = [];
+let dmChannels = [];
 let unsubMsgs = null, unsubEvents = null, unsubAlbums = null, unsubContacts = null, unsubPending = null,
-    unsubInvites = null, unsubHouseholds = null, unsubBranches = null, unsubPhotos = null, unsubOccasions = null;
+    unsubInvites = null, unsubHouseholds = null, unsubBranches = null, unsubPhotos = null, unsubOccasions = null,
+    unsubDMs = null;
 let _openAlbumId = null;
 
 // ---------- Auth screen wiring ----------
@@ -520,6 +522,7 @@ onAuthStateChanged(auth, async (user) => {
   initAlbums();
   initContacts();
   initOccasions();
+  initDMs();
   if (myDoc.role === 'admin') { initAdmin(); }
 });
 
@@ -528,8 +531,8 @@ function show(id) {
 }
 
 function cleanupListeners() {
-  [unsubMsgs, unsubEvents, unsubAlbums, unsubContacts, unsubPending, unsubInvites, unsubHouseholds, unsubBranches, unsubPhotos, unsubOccasions].forEach(u => u && u());
-  unsubMsgs = unsubEvents = unsubAlbums = unsubContacts = unsubPending = unsubInvites = unsubHouseholds = unsubBranches = unsubPhotos = unsubOccasions = null;
+  [unsubMsgs, unsubEvents, unsubAlbums, unsubContacts, unsubPending, unsubInvites, unsubHouseholds, unsubBranches, unsubPhotos, unsubOccasions, unsubDMs].forEach(u => u && u());
+  unsubMsgs = unsubEvents = unsubAlbums = unsubContacts = unsubPending = unsubInvites = unsubHouseholds = unsubBranches = unsubPhotos = unsubOccasions = unsubDMs = null;
 }
 
 // ---------- Tab nav ----------
@@ -568,6 +571,35 @@ function renderChannelList() {
     branches.filter(b => (b.householdIds || []).includes(myDoc.householdId))
       .forEach(b => $('channelList').appendChild(chBtn('br_' + b.id, '🌳 ' + b.name)));
   }
+  dmChannels.forEach(dm => {
+    const otherUid = (dm.participantIds || []).find(uid => uid !== currentUser.uid);
+    const otherUser = otherUid && usersById[otherUid];
+    $('channelList').appendChild(chBtn(dm.id, '💬 ' + (otherUser ? otherUser.name : 'Direct Message')));
+  });
+}
+
+function dmChannelId(uidA, uidB) { return 'dm_' + [uidA, uidB].sort().join('_'); }
+
+function startDM(otherUid) {
+  activeChannelId = dmChannelId(currentUser.uid, otherUid);
+  document.querySelectorAll('nav.tabbar button').forEach(b => b.classList.remove('active'));
+  const msgTab = document.querySelector('nav.tabbar button[data-tab="messages"]');
+  msgTab.classList.add('active');
+  document.querySelectorAll('.tabpane').forEach(p => p.classList.remove('active'));
+  $('pane-messages').classList.add('active');
+  $('msgComposer').style.display = 'flex';
+  $('fabBtn').style.display = 'none';
+  renderChannelList();
+  loadMessages();
+}
+
+function initDMs() {
+  const q = query(collection(db, 'channels'), where('participantIds', 'array-contains', currentUser.uid));
+  unsubDMs = onSnapshot(q, (snap) => {
+    dmChannels = [];
+    snap.forEach(d => dmChannels.push({ id: d.id, ...d.data() }));
+    renderChannelList();
+  });
 }
 
 function loadMessages() {
@@ -612,6 +644,9 @@ async function ensureChannelDoc(id) {
   } else if (id.startsWith('br_')) {
     const brId = id.slice(3);
     payload = { ...payload, name: branchesById[brId] ? branchesById[brId].name : 'Branch', type: 'branch', branchId: brId };
+  } else if (id.startsWith('dm_')) {
+    const [, uidA, uidB] = id.split('_');
+    payload = { type: 'dm', participantIds: [uidA, uidB], createdAt: serverTimestamp() };
   } else {
     payload = { ...payload, name: id, type: 'family' };
   }
@@ -813,7 +848,7 @@ function renderContacts() {
     const header = `<div class="hhHeader"><span>${hh ? '🏠 ' + escapeHtml(hh.name) : 'No household set'}</span>${contactLine}</div>`;
     const memberRows = (byHousehold[key] || []).map(u => `
       <div class="contactRow">
-        <div><div class="nm">${escapeHtml(u.name)}${hh && hh.responderId === u.id ? '<span class="respBadge">responder</span>' : ''}${ageBadgeHtml(u)}${canEditProfile(u.id) ? `<button class="editBtn" data-uid="${u.id}">✎</button>` : ''}</div></div>
+        <div><div class="nm">${escapeHtml(u.name)}${hh && hh.responderId === u.id ? '<span class="respBadge">responder</span>' : ''}${ageBadgeHtml(u)}${canEditProfile(u.id) ? `<button class="editBtn" data-uid="${u.id}">✎</button>` : ''}${u.id !== currentUser.uid ? `<button class="editBtn dmBtn" data-uid="${u.id}" title="Message">💬</button>` : ''}</div></div>
         <div class="info">${escapeHtml(u.email || '')}${u.phone ? '<br>' + escapeHtml(u.phone) : ''}</div>
       </div>`).join('');
     const extraRows = ((hh && hh.extraContacts) || []).map(ec => `
@@ -823,7 +858,8 @@ function renderContacts() {
       </div>`).join('');
     return header + memberRows + extraRows;
   }).join('');
-  wrap.querySelectorAll('.editBtn').forEach(b => { b.onclick = () => openEditProfile(b.dataset.uid); });
+  wrap.querySelectorAll('.editBtn:not(.dmBtn)').forEach(b => { b.onclick = () => openEditProfile(b.dataset.uid); });
+  wrap.querySelectorAll('.dmBtn').forEach(b => { b.onclick = () => startDM(b.dataset.uid); });
 }
 
 // ---------- Household self-service (responder edits their own household) ----------

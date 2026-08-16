@@ -25,6 +25,20 @@ service cloud.firestore {
         request.auth.uid in get(/databases/$(database)/documents/$(kind)/$(channelOrEventId)).data.invitedUserIds;
     }
 
+    // Family/household/branch channels are readable by any approved member (accepted
+    // simplification — see CLAUDE.md). DM channels are NOT — only the two participants.
+    function canAccessChannelDoc(channelData) {
+      return channelData.get('type', '') != 'dm' || request.auth.uid in channelData.get('participantIds', []);
+    }
+    function canAccessChannel(channelId) {
+      // The parent channel doc may not exist yet (a channel is only written on first
+      // message send, but its messages subcollection can be *queried* the moment a
+      // viewer opens the tab) — treat a not-yet-created channel as accessible, since
+      // there are no messages to protect until it exists.
+      return !exists(/databases/$(database)/documents/channels/$(channelId)) ||
+        canAccessChannelDoc(get(/databases/$(database)/documents/channels/$(channelId)).data);
+    }
+
     // Users can read their own doc and (once approved) the roster; only admins edit roles/status.
     match /users/{userId} {
       allow read: if signedIn() && (request.auth.uid == userId || isApprovedMember());
@@ -61,13 +75,15 @@ service cloud.firestore {
     }
 
     match /channels/{channelId} {
-      allow read: if isApprovedMember() || isFriendInvitedTo(channelId, 'channels');
-      allow create: if isApprovedMember();
+      // resource is null when checking a not-yet-created channel (ensureChannelDoc's
+      // existence probe) — nothing to protect yet, so allow the read through.
+      allow read: if (isApprovedMember() && (resource == null || canAccessChannelDoc(resource.data))) || isFriendInvitedTo(channelId, 'channels');
+      allow create: if isApprovedMember() && canAccessChannelDoc(request.resource.data);
       allow update, delete: if isAdmin();
 
       match /messages/{messageId} {
-        allow read: if isApprovedMember() || isFriendInvitedTo(channelId, 'channels');
-        allow create: if (isApprovedMember() || isFriendInvitedTo(channelId, 'channels'))
+        allow read: if (isApprovedMember() && canAccessChannel(channelId)) || isFriendInvitedTo(channelId, 'channels');
+        allow create: if ((isApprovedMember() && canAccessChannel(channelId)) || isFriendInvitedTo(channelId, 'channels'))
           && request.resource.data.senderId == request.auth.uid;
         allow update, delete: if signedIn() && resource.data.senderId == request.auth.uid;
       }
