@@ -60,6 +60,15 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    match /digestSubmissions/{submissionId} {
+      // Any approved member can post something to go in the weekly digest email.
+      // The digest Cloud Function (Admin SDK) marks items included after sending —
+      // that write bypasses these rules entirely, no special allowance needed here.
+      allow read: if isApprovedMember();
+      allow create: if isApprovedMember() && request.resource.data.submittedBy == request.auth.uid;
+      allow update, delete: if isAdmin() || (signedIn() && resource.data.submittedBy == request.auth.uid);
+    }
+
     match /occasions/{occasionId} {
       allow read: if isApprovedMember();
       allow write: if isAdmin();
