@@ -105,12 +105,19 @@ laziness.
 
 **Built:** invite-code-gated signup + admin approval, households/branches with
 "respond as a family" RSVP, family/household/branch messaging channels, event
-RSVP with live counts, contacts directory grouped by household, real photo
-upload to Storage, age badges (≤21) with self/admin-editable birthdate.
+RSVP with live counts and customizable invite audience, contacts directory
+grouped by household, real photo upload to Storage, age badges (≤21) with
+self/admin-editable birthdate, Family Calendar (birthdays/anniversaries/death
+anniversaries) with contact linking, Share button (native share sheet +
+Facebook/copy fallback), household self-service editing for the responder
+(Contacts tab → "Edit My Household" — phone/address/anniversary/responder
+handoff/extraContacts; member add-remove and moving a contact to a *different*
+household stay admin-only since those touch documents the responder doesn't
+own).
 
-**Deferred:** DM channels, household self-service editing of shared contact info
-(currently admin-only), notification digests, family tree view, item sign-up
-lists, native app wrapper.
+**Deferred:** DM channels, notification digests, family tree view, item
+sign-up lists, native app wrapper, deactivating a real account holder's login
+(vs. the deceased-toggle already built for no-account extraContacts).
 
 ## Working Style / Preferences
 
