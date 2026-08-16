@@ -141,10 +141,12 @@ suspecting the boolean logic.
 
 ## Theme System
 
-10 built-in presets (`THEME_PRESETS` in app/index.html) spanning tame→extreme and
+11 built-in presets (`THEME_PRESETS` in app/index.html) spanning tame→extreme and
 Facebook-mimicking→not, as asked for: Classic Family, Facebook Blue, Instagram Grid, Kraft &
 Twine, Midnight Family, Retro Photo Album, Pastel Nursery, Nature/Botanical, Holographic/Neon,
-Command Center. Each defines a full CSS custom-property set (colors, `--radius`, `--font-heading`/
+Command Center, Rasta (deep green/gold/red — a tricolor gradient border-top stripe rather than
+literal flag imagery, chosen as a palette/vibe like every other theme here, not caricature). Each
+defines a full CSS custom-property set (colors, `--radius`, `--font-heading`/
 `--font-body`) plus an animation tier (`none`/`subtle`/`glow`/`aurora`), applied instantly via
 `applyTheme()` — no reload, no build step (fonts loaded once via a Google Fonts `<link>` in
 `<head>`, CSS vars swapped on `:root` directly).
@@ -155,17 +157,23 @@ Applied once immediately at script load — before Firebase auth even resolves �
 member's sign-in screen matches what they last picked on that device, not a flash of default
 then a swap.
 
-**Command Center gets real structural divergence, not just decoration** — the one place in the
-app where `activeThemeId` branches actual rendering logic, not just CSS. `renderWallFeed()`
-(app/index.html) checks `activeThemeId === 'command'` and renders the same `posts` data as a
-compact terminal-style log (`.wallLog`/`.wallLogLine`, `[HH:MM] AUTHOR: text`) instead of
-Facebook-style `.wallPost` cards; nav labels lose their emoji for bracket-style `[tabname]` via a
-`<span class="lbl">` wrapper + `::before`/`::after`. This was the direct answer to "themes still
-feel vanilla, make the non-Facebook end genuinely different" — the other 9 presets are still
-CSS-only. If another theme ever wants the same treatment, follow this pattern: keep the
-Firestore query/rules/compose logic identical, branch only the render function, and cache the
-last snapshot (`_lastWallSnap`) so switching themes mid-view re-renders immediately instead of
-waiting for the next Firestore update.
+**Three themes get real structural divergence, not just decoration** — `renderWallFeed()`
+(app/index.html) branches on `activeThemeId` for actual rendering logic, not just CSS, currently
+for:
+- `command`: compact terminal-style log (`.wallLog`/`.wallLogLine`, `[HH:MM] AUTHOR: text`)
+  instead of Facebook-style `.wallPost` cards; nav labels also lose their emoji for bracket-style
+  `[tabname]` via a `<span class="lbl">` wrapper + `::before`/`::after`.
+- `igGrid`: an actual 3-column square photo grid (`.wallGrid`/`.wallGridTile`), matching a real
+  Instagram profile — text-only posts become a small italic quote tile in the same grid.
+- `retro`: a 2-column scrapbook page (`.wallAlbumGrid`/`.wallAlbumTile`) — tilted
+  polaroid-style tiles (alternating rotation) with a caption below each photo.
+
+This was the direct answer to "themes still feel vanilla, make the non-Facebook end genuinely
+different, then extend the pattern." The remaining presets are still CSS-only. To extend this to
+another theme: keep the Firestore query/rules/compose logic identical (all three branches share
+`wallDeleteHandler()` for delete+Storage-cleanup so that logic is only written once), branch only
+`renderWallFeed()`, and rely on the cached last snapshot (`_lastWallSnap`) so switching themes
+mid-view re-renders immediately instead of waiting for the next Firestore update.
 
 **Custom editor** (admin-only, 🎨 button in the header → "Build a custom theme"): 4 color pickers
 (bg/card/ink/accent) + corner-style/heading-font/animation dropdowns. The 3 remaining tokens
