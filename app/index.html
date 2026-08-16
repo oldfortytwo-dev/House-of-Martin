@@ -813,7 +813,7 @@ function renderContacts() {
       </div>`).join('');
     const extraRows = ((hh && hh.extraContacts) || []).map(ec => `
       <div class="contactRow">
-        <div><div class="nm">${escapeHtml(ec.name)}${ageBadgeHtml(ec)}<span class="noAccountBadge">no account</span></div></div>
+        <div><div class="nm">${escapeHtml(ec.name)}${ec.deceased ? ' 🕊' : ''}${ageBadgeHtml(ec)}<span class="noAccountBadge">no account</span></div></div>
         <div class="info">${ec.email ? escapeHtml(ec.email) : ''}${ec.phone ? '<br>' + escapeHtml(ec.phone) : ''}</div>
       </div>`).join('');
     return header + memberRows + extraRows;
@@ -957,6 +957,22 @@ $('createHouseholdBtn').onclick = async () => {
 };
 
 let expandedHouseholdIds = new Set();
+let ecUiState = {}; // contactId -> 'edit' | 'move' | undefined
+
+async function createHouseholdInline(nameHint) {
+  const name = prompt('New household name:', nameHint || '');
+  if (!name || !name.trim()) return null;
+  const ref = await addDoc(collection(db, 'households'), {
+    name: name.trim(), memberIds: [], responderId: null, phone: '', address: '',
+    anniversary: null, extraContacts: [], createdBy: currentUser.uid, createdAt: serverTimestamp()
+  });
+  return ref.id;
+}
+
+function householdPickerHtml(cls, excludeId) {
+  const opts = households.filter(h => h.id !== excludeId).map(h => `<option value="${h.id}">${escapeHtml(h.name)}</option>`).join('');
+  return `<select class="${cls}"><option value="">— pick household —</option>${opts}</select>`;
+}
 
 function renderHouseholdsAdmin() {
   const wrap = $('householdList');
@@ -991,11 +1007,42 @@ function renderHouseholdsAdmin() {
       const u = usersById[uid];
       return `<option value="${uid}" ${hh.responderId === uid ? 'selected' : ''}>${escapeHtml(u ? u.name : uid)}</option>`;
     }).join('') || '<option value="">— add &amp; save members first —</option>';
-    const extraRows = (hh.extraContacts || []).map(ec => `
+    const extraRows = (hh.extraContacts || []).map(ec => {
+      const state = ecUiState[ec.id];
+      if (state === 'edit') {
+        return `<div class="hhEditor" data-ecid="${ec.id}">
+          <div class="field"><label>Name</label><input type="text" class="ecEditName" value="${escapeHtml(ec.name)}"></div>
+          <div style="display:flex; gap:6px; flex-wrap:wrap">
+            <input type="date" class="ecEditBirthdate" value="${ec.birthdate || ''}" style="flex:1; min-width:120px">
+            <input type="tel" class="ecEditPhone" value="${escapeHtml(ec.phone || '')}" placeholder="Phone" style="flex:1; min-width:100px">
+            <input type="email" class="ecEditEmail" value="${escapeHtml(ec.email || '')}" placeholder="Email" style="flex:1; min-width:120px">
+          </div>
+          <div style="display:flex; gap:8px; margin-top:8px">
+            <button class="btn small ecSaveEdit" data-id="${ec.id}">Save</button>
+            <button class="btn secondary small ecCancelEdit" data-id="${ec.id}">Cancel</button>
+          </div>
+        </div>`;
+      }
+      if (state === 'move') {
+        return `<div class="hhEditor" data-ecid="${ec.id}">
+          <div class="nm">Move ${escapeHtml(ec.name)} to…</div>
+          ${householdPickerHtml('ecMoveTarget', hh.id)}
+          <div style="display:flex; gap:8px; margin-top:8px">
+            <button class="btn small ecMoveGo" data-id="${ec.id}">Move</button>
+            <button class="btn secondary small ecMoveNew" data-id="${ec.id}">+ New household</button>
+            <button class="btn secondary small ecCancelEdit" data-id="${ec.id}">Cancel</button>
+          </div>
+        </div>`;
+      }
+      return `
       <div class="contactRow">
-        <div><div class="nm">${escapeHtml(ec.name)}${ageBadgeHtml(ec)}${ec.phone || ec.email ? ` <span class="hh">${escapeHtml([ec.phone, ec.email].filter(Boolean).join(' · '))}</span>` : ''}</div></div>
+        <div><div class="nm">${escapeHtml(ec.name)}${ec.deceased ? ' 🕊' : ''}${ageBadgeHtml(ec)}${ec.phone || ec.email ? ` <span class="hh">${escapeHtml([ec.phone, ec.email].filter(Boolean).join(' · '))}</span>` : ''}</div></div>
+        <button class="editBtn ecEditBtn" data-id="${ec.id}">✎</button>
+        <button class="editBtn ecMoveBtn" data-id="${ec.id}">🔀</button>
+        <button class="editBtn ecDeceasedBtn" data-id="${ec.id}" title="Mark as deceased">${ec.deceased ? '↩' : '🕊'}</button>
         <button class="editBtn ecDel" data-id="${ec.id}">✕</button>
-      </div>`).join('') || '<div class="hh">None yet</div>';
+      </div>`;
+    }).join('') || '<div class="hh">None yet</div>';
     box.innerHTML = `
       ${summary}
       <div class="ecSection" style="border-top:none; margin-top:10px; padding-top:0">
@@ -1042,7 +1089,21 @@ function renderHouseholdsAdmin() {
       const batch = writeBatch(db);
       batch.update(doc(db, 'households', hh.id), { memberIds: selected, responderId });
       (hh.memberIds || []).filter(uid => !selected.includes(uid)).forEach(uid => batch.update(doc(db, 'users', uid), { householdId: null }));
-      selected.forEach(uid => batch.update(doc(db, 'users', uid), { householdId: hh.id }));
+      selected.forEach(uid => {
+        batch.update(doc(db, 'users', uid), { householdId: hh.id });
+        // If this member was previously in a DIFFERENT household, clean that household's
+        // memberIds too — otherwise it keeps a stale reference (e.g. someone moving
+        // households after getting married would still show as a member of their old one).
+        const prevHouseholdId = usersById[uid] && usersById[uid].householdId;
+        const prevHH = prevHouseholdId && prevHouseholdId !== hh.id ? householdsById[prevHouseholdId] : null;
+        if (prevHH) {
+          const cleaned = (prevHH.memberIds || []).filter(id => id !== uid);
+          batch.update(doc(db, 'households', prevHouseholdId), {
+            memberIds: cleaned,
+            responderId: prevHH.responderId === uid ? (cleaned[0] || null) : prevHH.responderId
+          });
+        }
+      });
       await batch.commit();
     };
     box.querySelector('.hhDelete').onclick = async () => {
@@ -1063,6 +1124,60 @@ function renderHouseholdsAdmin() {
       btn.onclick = async () => {
         const updated = (hh.extraContacts || []).filter(ec => ec.id !== btn.dataset.id);
         await updateDoc(doc(db, 'households', hh.id), { extraContacts: updated });
+      };
+    });
+    box.querySelectorAll('.ecEditBtn').forEach(btn => {
+      btn.onclick = () => { ecUiState[btn.dataset.id] = 'edit'; renderHouseholdsAdmin(); };
+    });
+    box.querySelectorAll('.ecMoveBtn').forEach(btn => {
+      btn.onclick = () => { ecUiState[btn.dataset.id] = 'move'; renderHouseholdsAdmin(); };
+    });
+    box.querySelectorAll('.ecCancelEdit').forEach(btn => {
+      btn.onclick = () => { delete ecUiState[btn.dataset.id]; renderHouseholdsAdmin(); };
+    });
+    box.querySelectorAll('.ecDeceasedBtn').forEach(btn => {
+      btn.onclick = async () => {
+        const updated = (hh.extraContacts || []).map(ec => ec.id === btn.dataset.id ? { ...ec, deceased: !ec.deceased } : ec);
+        await updateDoc(doc(db, 'households', hh.id), { extraContacts: updated });
+      };
+    });
+    box.querySelectorAll('.ecSaveEdit').forEach(btn => {
+      btn.onclick = async () => {
+        const form = box.querySelector(`[data-ecid="${btn.dataset.id}"]`);
+        const updated = (hh.extraContacts || []).map(ec => ec.id !== btn.dataset.id ? ec : {
+          ...ec,
+          name: form.querySelector('.ecEditName').value.trim() || ec.name,
+          birthdate: form.querySelector('.ecEditBirthdate').value || null,
+          phone: form.querySelector('.ecEditPhone').value.trim(),
+          email: form.querySelector('.ecEditEmail').value.trim()
+        });
+        await updateDoc(doc(db, 'households', hh.id), { extraContacts: updated });
+        delete ecUiState[btn.dataset.id];
+      };
+    });
+    async function moveExtraContact(contactId, targetHouseholdId) {
+      const ec = (hh.extraContacts || []).find(c => c.id === contactId);
+      if (!ec || !targetHouseholdId) return;
+      const target = households.find(h => h.id === targetHouseholdId);
+      if (!target) return;
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'households', hh.id), { extraContacts: (hh.extraContacts || []).filter(c => c.id !== contactId) });
+      batch.update(doc(db, 'households', targetHouseholdId), { extraContacts: [...(target.extraContacts || []), ec] });
+      await batch.commit();
+      delete ecUiState[contactId];
+    }
+    box.querySelectorAll('.ecMoveGo').forEach(btn => {
+      btn.onclick = () => {
+        const form = box.querySelector(`[data-ecid="${btn.dataset.id}"]`);
+        moveExtraContact(btn.dataset.id, form.querySelector('.ecMoveTarget').value);
+      };
+    });
+    box.querySelectorAll('.ecMoveNew').forEach(btn => {
+      btn.onclick = async () => {
+        const ec = (hh.extraContacts || []).find(c => c.id === btn.dataset.id);
+        const newId = await createHouseholdInline(ec ? ec.name + ' Family' : '');
+        if (newId) await moveExtraContact(btn.dataset.id, newId);
+        else renderHouseholdsAdmin();
       };
     });
     box.querySelector('.ecAddOne').onclick = async () => {
@@ -1477,35 +1592,44 @@ function renderUnmatchedBirthdays() {
   const wrap = $('unmatchedResults');
   if (!_unmatchedBirthdays.length) { section.style.display = 'none'; wrap.innerHTML = ''; return; }
   section.style.display = 'block';
-  const hhOptions = households.map(h => `<option value="${h.id}">${escapeHtml(h.name)}</option>`).join('');
   wrap.innerHTML = _unmatchedBirthdays.map((u, i) => `
     <div class="contactRow" data-i="${i}">
       <div class="nm" style="flex:1">${escapeHtml(u.name)} <span class="hh">${String(u.month).padStart(2, '0')}/${String(u.day).padStart(2, '0')}</span></div>
       <input type="number" class="unmYear" data-i="${i}" value="${u.guessedYear}" style="width:64px; padding:6px; border:1px solid var(--border); border-radius:6px; margin-right:6px">
-      <select class="unmHousehold" data-i="${i}" style="padding:6px; border:1px solid var(--border); border-radius:6px; margin-right:6px">
-        <option value="">— pick household —</option>
-        ${hhOptions}
-      </select>
-      <button class="btn small secondary unmAdd" data-i="${i}">Add</button>
+      ${householdPickerHtml('unmHousehold', null).replace('<select', `<select data-i="${i}"`)}
+      <button class="btn small secondary unmAdd" data-i="${i}" style="margin-left:6px">Add</button>
+      <button class="btn small secondary unmNew" data-i="${i}">+ New</button>
     </div>
   `).join('');
+
+  async function addUnmatchedToHousehold(i, hhId) {
+    const u = _unmatchedBirthdays[i];
+    const year = parseInt(document.querySelector(`.unmYear[data-i="${i}"]`).value, 10);
+    if (!year) return;
+    const hh = households.find(h => h.id === hhId);
+    if (!hh) return;
+    const birthdate = `${year}-${String(u.month).padStart(2, '0')}-${String(u.day).padStart(2, '0')}`;
+    const contactId = crypto.randomUUID();
+    const updated = [...(hh.extraContacts || []), { id: contactId, name: u.name, birthdate, phone: '', email: '' }];
+    await updateDoc(doc(db, 'households', hh.id), { extraContacts: updated });
+    await updateDoc(doc(db, 'occasions', u.occasionId), { linkedHouseholdId: hh.id, linkedContactId: contactId });
+    _unmatchedBirthdays.splice(i, 1);
+    renderUnmatchedBirthdays();
+  }
+
   wrap.querySelectorAll('.unmAdd').forEach(btn => {
+    btn.onclick = () => {
+      const i = +btn.dataset.i;
+      const hhId = document.querySelector(`.unmHousehold[data-i="${i}"]`).value;
+      if (!hhId) { alert('Pick a household first, or use + New.'); return; }
+      addUnmatchedToHousehold(i, hhId);
+    };
+  });
+  wrap.querySelectorAll('.unmNew').forEach(btn => {
     btn.onclick = async () => {
       const i = +btn.dataset.i;
-      const u = _unmatchedBirthdays[i];
-      const hhId = document.querySelector(`.unmHousehold[data-i="${i}"]`).value;
-      if (!hhId) { alert('Pick a household first.'); return; }
-      const year = parseInt(document.querySelector(`.unmYear[data-i="${i}"]`).value, 10);
-      if (!year) return;
-      const hh = households.find(h => h.id === hhId);
-      if (!hh) return;
-      const birthdate = `${year}-${String(u.month).padStart(2, '0')}-${String(u.day).padStart(2, '0')}`;
-      const contactId = crypto.randomUUID();
-      const updated = [...(hh.extraContacts || []), { id: contactId, name: u.name, birthdate, phone: '', email: '' }];
-      await updateDoc(doc(db, 'households', hh.id), { extraContacts: updated });
-      await updateDoc(doc(db, 'occasions', u.occasionId), { linkedHouseholdId: hh.id, linkedContactId: contactId });
-      _unmatchedBirthdays.splice(i, 1);
-      renderUnmatchedBirthdays();
+      const newId = await createHouseholdInline(_unmatchedBirthdays[i].name + ' Family');
+      if (newId) await addUnmatchedToHousehold(i, newId);
     };
   });
 }
