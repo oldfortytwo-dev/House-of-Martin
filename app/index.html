@@ -345,8 +345,19 @@
             <input type="file" id="wallPhotoInput" accept="image/*" style="display:none">
             <button class="btn small secondary" id="wallAddPhotoBtn">📷 Add photo</button>
             <span class="hh" id="wallPhotoPreviewName"></span>
-            <button class="btn small" id="wallPostBtn" style="margin-left:auto; width:auto">Post</button>
           </div>
+          <div class="field" style="margin-top:10px"><label>Post to</label>
+            <select id="wallAudienceType">
+              <option value="everyone">Everyone in the family</option>
+              <option value="custom">Choose specific people/groups</option>
+            </select>
+          </div>
+          <div id="wallAudiencePicker" style="display:none">
+            <div class="field"><label>Families</label><div id="wallHouseholdPicker" class="chkGroup"></div></div>
+            <div class="field"><label>Groups (branches)</label><div id="wallBranchPicker" class="chkGroup"></div></div>
+            <div class="field"><label>Individuals</label><div id="wallIndividualPicker" class="chkGroup"></div></div>
+          </div>
+          <button class="btn small" id="wallPostBtn">Post</button>
           <div class="uploadStatus" id="wallPostStatus"></div>
         </div>
         <div id="wallFeed"></div>
@@ -1164,6 +1175,7 @@ function initContacts() {
     renderContacts();
     renderMyHousehold();
     renderChannelList();
+    populateWallAudiencePickers();
     if (myDoc.role === 'admin') { renderHouseholdsAdmin(); renderStaffList(); renderDashboard(); }
   });
 }
@@ -1383,6 +1395,7 @@ $('toggleAlbumsBtn').onclick = () => {
 
 // ---------- Wall (post text + photo directly, no album required) ----------
 function initWall() {
+  populateWallAudiencePickers();
   const q = query(collection(db, 'posts'), orderBy('createdAt', 'desc'), limit(50));
   unsubWall = onSnapshot(q, (snap) => {
     const wrap = $('wallFeed');
@@ -1397,7 +1410,7 @@ function initWall() {
       card.innerHTML = `
         ${canDelete ? `<button class="editBtn wallDel" data-id="${d.id}">✕</button>` : ''}
         <div class="who">${escapeHtml(p.authorName || '')}</div>
-        <div class="when">${when}</div>
+        <div class="when">${when}${p.audience && p.audience !== 'everyone' ? ' · Posted to: ' + escapeHtml(describeAudience(p)) : ''}</div>
         ${p.text ? `<div class="txt">${escapeHtml(p.text)}</div>` : ''}
         ${p.photoUrl ? `<img src="${p.photoUrl}" alt="">` : ''}
       `;
@@ -1423,30 +1436,67 @@ $('wallPhotoInput').addEventListener('change', (e) => {
   $('wallPhotoPreviewName').textContent = _wallPhotoFile ? '📎 ' + _wallPhotoFile.name : '';
 });
 
+function populateWallAudiencePickers() {
+  $('wallHouseholdPicker').innerHTML = households.map(h =>
+    `<label class="chk"><input type="checkbox" value="${h.id}"> 🏠 ${escapeHtml(h.name)}</label>`
+  ).join('') || '<span class="hh">No families set up yet</span>';
+  $('wallBranchPicker').innerHTML = branches.map(b =>
+    `<label class="chk"><input type="checkbox" value="${b.id}"> 🌳 ${escapeHtml(b.name)}</label>`
+  ).join('') || '<span class="hh">No groups set up yet</span>';
+  $('wallIndividualPicker').innerHTML = allApprovedUsers.map(u =>
+    `<label class="chk"><input type="checkbox" value="${u.id}"> ${escapeHtml(u.name)}${u.role === 'friend' ? ' <span class="hh">(friend)</span>' : ''}</label>`
+  ).join('') || '<span class="hh">No approved members yet</span>';
+}
+$('wallAudienceType').addEventListener('change', () => {
+  $('wallAudiencePicker').style.display = $('wallAudienceType').value === 'custom' ? 'block' : 'none';
+});
+
+function resolveWallAudience() {
+  if ($('wallAudienceType').value !== 'custom') {
+    return { audience: 'everyone', invitedHouseholdIds: [], invitedBranchIds: [], invitedUserIds: [] };
+  }
+  const householdIds = Array.from(document.querySelectorAll('#wallHouseholdPicker input:checked')).map(c => c.value);
+  const branchIds = Array.from(document.querySelectorAll('#wallBranchPicker input:checked')).map(c => c.value);
+  const individualIds = Array.from(document.querySelectorAll('#wallIndividualPicker input:checked')).map(c => c.value);
+
+  const uidSet = new Set(individualIds);
+  householdIds.forEach(hid => (householdsById[hid]?.memberIds || []).forEach(uid => uidSet.add(uid)));
+  branchIds.forEach(bid => {
+    ((branchesById[bid] && branchesById[bid].householdIds) || []).forEach(hid =>
+      (householdsById[hid]?.memberIds || []).forEach(uid => uidSet.add(uid)));
+  });
+  return { audience: 'custom', invitedHouseholdIds: householdIds, invitedBranchIds: branchIds, invitedUserIds: Array.from(uidSet) };
+}
+
 $('wallPostBtn').onclick = async () => {
   const text = $('wallText').value.trim();
   if (!text && !_wallPhotoFile) return;
+  const aud = resolveWallAudience();
   $('wallPostStatus').textContent = _wallPhotoFile ? 'Posting (uploading photo)…' : 'Posting…';
   try {
     let photoUrl = null, photoStoragePath = null;
+    const payload = {
+      text, authorId: currentUser.uid, authorName: myDoc.name, createdAt: serverTimestamp(),
+      audience: aud.audience, invitedHouseholdIds: aud.invitedHouseholdIds,
+      invitedBranchIds: aud.invitedBranchIds, invitedUserIds: aud.invitedUserIds
+    };
     if (_wallPhotoFile) {
       const postRef = doc(collection(db, 'posts'));
       photoStoragePath = `posts/${postRef.id}_${_wallPhotoFile.name}`;
       const sRef = ref(storage, photoStoragePath);
       await uploadBytes(sRef, _wallPhotoFile, { customMetadata: { uploaderId: currentUser.uid } });
       photoUrl = await getDownloadURL(sRef);
-      await setDoc(postRef, {
-        text, photoUrl, photoStoragePath, authorId: currentUser.uid, authorName: myDoc.name, createdAt: serverTimestamp()
-      });
+      await setDoc(postRef, { ...payload, photoUrl, photoStoragePath });
     } else {
-      await addDoc(collection(db, 'posts'), {
-        text, photoUrl: null, photoStoragePath: null, authorId: currentUser.uid, authorName: myDoc.name, createdAt: serverTimestamp()
-      });
+      await addDoc(collection(db, 'posts'), { ...payload, photoUrl: null, photoStoragePath: null });
     }
     $('wallText').value = '';
     _wallPhotoFile = null;
     $('wallPhotoPreviewName').textContent = '';
     $('wallPostStatus').textContent = '';
+    $('wallAudienceType').value = 'everyone';
+    $('wallAudiencePicker').style.display = 'none';
+    document.querySelectorAll('#wallHouseholdPicker input, #wallBranchPicker input, #wallIndividualPicker input').forEach(c => c.checked = false);
   } catch (err) {
     $('wallPostStatus').textContent = 'Failed to post: ' + (err.message || err);
   }
@@ -1530,6 +1580,7 @@ function initHouseholds() {
     renderContacts();
     renderMyHousehold();
     renderChannelList();
+    populateWallAudiencePickers();
     if (myDoc.role === 'admin') { renderHouseholdsAdmin(); renderDashboard(); }
   });
 }
@@ -1540,6 +1591,7 @@ function initBranches() {
     snap.forEach(d => { const b = { id: d.id, ...d.data() }; branches.push(b); branchesById[d.id] = b; });
     branches.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
     renderChannelList();
+    populateWallAudiencePickers();
     if (myDoc.role === 'admin') { renderBranchesAdmin(); renderDashboard(); }
   });
 }

@@ -133,8 +133,12 @@ service cloud.firestore {
     }
 
     match /posts/{postId} {
-      // Family Wall — a direct text+photo post, no album required. Family-wide only for now
-      // (no per-post audience targeting yet, unlike events).
+      // Family Wall — a direct text+photo post, no album required. Has the same audience
+      // picker as events (everyone/household/branch/individual) for *addressing* ("posted to
+      // the Smiths"), not access control — every approved member can still read every post
+      // regardless of audience, same deliberate simplification as events (see that match
+      // block's comment for why: Firestore list-query rules can't safely per-document-filter
+      // a broad collection query without reworking every query to be provably scoped).
       allow read: if isApprovedMember();
       allow create: if isApprovedMember() && request.resource.data.authorId == request.auth.uid;
       allow update, delete: if isAdmin() || (signedIn() && resource.data.authorId == request.auth.uid);
