@@ -110,6 +110,24 @@
   body[data-theme="command"] .card { border-left: 3px solid var(--accent); }
   body[data-theme="command"] h1, body[data-theme="command"] h2, body[data-theme="command"] h3, body[data-theme="command"] .nm { text-transform: uppercase; letter-spacing: 1px; }
   body[data-theme="command"] .btn { text-transform: uppercase; letter-spacing: 1px; font-size: 13px; }
+  body[data-theme="command"] nav.tabbar button .ic { display: none; }
+  body[data-theme="command"] nav.tabbar button .lbl { text-transform: lowercase; letter-spacing: .5px; }
+  body[data-theme="command"] nav.tabbar button .lbl::before { content: '['; }
+  body[data-theme="command"] nav.tabbar button .lbl::after { content: ']'; }
+  body[data-theme="command"] nav.tabbar button.active { text-shadow: 0 0 8px var(--accent); }
+
+  /* Command Center Wall: compact terminal log instead of Facebook-style cards */
+  body[data-theme="command"] #wallComposer { padding: 10px 12px; }
+  body[data-theme="command"] #wallComposer h3::before { content: '$ '; color: var(--accent); }
+  body[data-theme="command"] #wallText { background: var(--bg); border-color: var(--accent); font-family: var(--font-body); caret-color: var(--accent); }
+  body[data-theme="command"] .wallLog { font-family: var(--font-body); font-size: 13px; border: 1px solid var(--border); border-radius: 2px; overflow: hidden; margin-bottom: 12px; }
+  body[data-theme="command"] .wallLogLine { display: flex; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--border); align-items: baseline; }
+  body[data-theme="command"] .wallLogLine:last-child { border-bottom: none; }
+  body[data-theme="command"] .wallLogLine .ts { color: var(--ink-soft); flex-shrink: 0; }
+  body[data-theme="command"] .wallLogLine .who { color: var(--accent); font-weight: 700; flex-shrink: 0; }
+  body[data-theme="command"] .wallLogLine .txt { flex: 1; word-break: break-word; }
+  body[data-theme="command"] .wallLogLine .thumb { width: 32px; height: 32px; object-fit: cover; border-radius: 2px; cursor: pointer; flex-shrink: 0; }
+  body[data-theme="command"] .wallLogLine .wallDel { flex-shrink: 0; }
 
   /* ---- Header banner ---- */
   #bannerHeader { display: none; width: 100%; height: 120px; background-size: cover; background-position: center; }
@@ -483,12 +501,12 @@
     <button class="fab" id="fabBtn" style="display:none">+</button>
 
     <nav class="tabbar">
-      <button data-tab="messages" class="active"><span class="ic">💬</span>Messages</button>
-      <button data-tab="events"><span class="ic">📅</span>Events</button>
-      <button data-tab="contacts"><span class="ic">📇</span>Contacts</button>
-      <button data-tab="calendar"><span class="ic">🎂</span>Calendar</button>
-      <button data-tab="photos"><span class="ic">🧱</span>Wall</button>
-      <button data-tab="admin" id="adminTabBtn" style="display:none"><span class="ic">⚙️</span>Admin</button>
+      <button data-tab="messages" class="active"><span class="ic">💬</span><span class="lbl">Messages</span></button>
+      <button data-tab="events"><span class="ic">📅</span><span class="lbl">Events</span></button>
+      <button data-tab="contacts"><span class="ic">📇</span><span class="lbl">Contacts</span></button>
+      <button data-tab="calendar"><span class="ic">🎂</span><span class="lbl">Calendar</span></button>
+      <button data-tab="photos"><span class="ic">🧱</span><span class="lbl">Wall</span></button>
+      <button data-tab="admin" id="adminTabBtn" style="display:none"><span class="ic">⚙️</span><span class="lbl">Admin</span></button>
     </nav>
   </div>
 
@@ -742,6 +760,7 @@ function applyTheme(themeOrId) {
 function loadAndApplyMyTheme() {
   const override = localStorage.getItem('hom_theme');
   applyTheme((override && getTheme(override)) ? override : familyDefaultThemeId);
+  rerenderWallFeed();
 }
 applyTheme(localStorage.getItem('hom_theme') || 'classic'); // pre-login, so the sign-in screen matches too
 
@@ -1406,13 +1425,60 @@ $('toggleAlbumsBtn').onclick = () => {
 };
 
 // ---------- Wall (post text + photo directly, no album required) ----------
+// Command Center renders the exact same posts as a compact terminal-style log instead of
+// Facebook-style cards — a real structural difference per theme, not just recolored chrome.
+function wallDeleteHandler(postId, photoStoragePath) {
+  return async (e) => {
+    e.stopPropagation();
+    if (!confirm('Delete this post?')) return;
+    await deleteDoc(doc(db, 'posts', postId));
+    if (photoStoragePath) {
+      try { await deleteObject(ref(storage, photoStoragePath)); } catch (err) { console.warn('Storage delete failed', err); }
+    }
+  };
+}
+
+let _lastWallSnap = null;
+function rerenderWallFeed() { if (_lastWallSnap) renderWallFeed(_lastWallSnap); }
+
 function initWall() {
   populateWallAudiencePickers();
   const q = query(collection(db, 'posts'), orderBy('createdAt', 'desc'), limit(50));
   unsubWall = onSnapshot(q, (snap) => {
+    _lastWallSnap = snap;
+    renderWallFeed(snap);
+  });
+}
+
+function renderWallFeed(snap) {
     const wrap = $('wallFeed');
     $('wallEmpty').style.display = snap.empty ? 'block' : 'none';
     wrap.innerHTML = '';
+
+    if (activeThemeId === 'command') {
+      const log = document.createElement('div');
+      log.className = 'wallLog';
+      snap.forEach(d => {
+        const p = d.data();
+        const canDelete = p.authorId === currentUser.uid || myDoc.role === 'admin';
+        const ts = p.createdAt && p.createdAt.toDate ? p.createdAt.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--';
+        const line = document.createElement('div');
+        line.className = 'wallLogLine';
+        line.innerHTML = `
+          <span class="ts">[${ts}]</span>
+          <span class="who">${escapeHtml((p.authorName || '').toUpperCase())}:</span>
+          <span class="txt">${escapeHtml(p.text || '')}${p.audience && p.audience !== 'everyone' ? ' <span class="hh">(' + escapeHtml(describeAudience(p)) + ')</span>' : ''}</span>
+          ${p.photoUrl ? `<img class="thumb" src="${p.photoUrl}" alt="">` : ''}
+          ${canDelete ? `<button class="editBtn wallDel">×</button>` : ''}
+        `;
+        if (p.photoUrl) line.querySelector('.thumb').onclick = () => window.open(p.photoUrl, '_blank');
+        if (canDelete) line.querySelector('.wallDel').onclick = wallDeleteHandler(d.id, p.photoStoragePath);
+        log.appendChild(line);
+      });
+      wrap.appendChild(log);
+      return;
+    }
+
     snap.forEach(d => {
       const p = d.data();
       const canDelete = p.authorId === currentUser.uid || myDoc.role === 'admin';
@@ -1427,19 +1493,9 @@ function initWall() {
         ${p.photoUrl ? `<img src="${p.photoUrl}" alt="">` : ''}
       `;
       if (p.photoUrl) card.querySelector('img').onclick = () => window.open(p.photoUrl, '_blank');
-      if (canDelete) {
-        card.querySelector('.wallDel').onclick = async (e) => {
-          e.stopPropagation();
-          if (!confirm('Delete this post?')) return;
-          await deleteDoc(doc(db, 'posts', d.id));
-          if (p.photoStoragePath) {
-            try { await deleteObject(ref(storage, p.photoStoragePath)); } catch (err) { console.warn('Storage delete failed', err); }
-          }
-        };
-      }
+      if (canDelete) card.querySelector('.wallDel').onclick = wallDeleteHandler(d.id, p.photoStoragePath);
       wrap.appendChild(card);
     });
-  });
 }
 
 $('wallAddPhotoBtn').onclick = () => $('wallPhotoInput').click();
@@ -2462,6 +2518,7 @@ function renderThemeGrid() {
       applyTheme(btn.dataset.id);
       localStorage.setItem('hom_theme', btn.dataset.id);
       renderThemeGrid();
+      rerenderWallFeed();
     };
   });
 }
