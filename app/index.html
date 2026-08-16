@@ -47,6 +47,70 @@
     50% { background-position: 100% 100%, 0% 100%, 50% 0%; }
   }
 
+  /* ---- Per-theme signature treatments (structure/texture, not just color) ---- */
+
+  /* Facebook Blue: bold color header bar, pill message bubbles */
+  body[data-theme="fbBlue"] header.topbar { background: var(--accent); margin: 0 0 4px; padding: 16px 18px 14px; }
+  body[data-theme="fbBlue"] header.topbar h2, body[data-theme="fbBlue"] header.topbar .sub { color: #fff; }
+  body[data-theme="fbBlue"] header.topbar .btn.secondary { color: #fff; border-color: rgba(255,255,255,.6); }
+  body[data-theme="fbBlue"] .msg { border-radius: 18px; }
+  body[data-theme="fbBlue"] nav.tabbar { box-shadow: 0 -2px 6px rgba(0,0,0,.06); }
+
+  /* Instagram Grid: hairline borders, cursive italic wordmark, uppercase pill buttons */
+  body[data-theme="igGrid"] header.topbar h2 { font-family: 'Playfair Display', serif; font-style: italic; font-size: 25px; letter-spacing: .3px; }
+  body[data-theme="igGrid"] .card, body[data-theme="igGrid"] .albumTile, body[data-theme="igGrid"] .photoTile { border-width: 1px; box-shadow: none; }
+  body[data-theme="igGrid"] .btn { text-transform: uppercase; letter-spacing: 1.5px; font-size: 12px; font-weight: 700; }
+
+  /* Kraft & Twine: paper fiber texture, tilted index-card look, washi tape corner */
+  body[data-theme="kraft"] #app { background-image: repeating-linear-gradient(115deg, rgba(0,0,0,.025) 0 2px, transparent 2px 6px), repeating-linear-gradient(25deg, rgba(0,0,0,.02) 0 2px, transparent 2px 8px); }
+  body[data-theme="kraft"] .card { transform: rotate(-.35deg); box-shadow: 2px 3px 7px rgba(40,25,10,.18); position: relative; }
+  body[data-theme="kraft"] .card:nth-of-type(even) { transform: rotate(.35deg); }
+  body[data-theme="kraft"] .card::before { content: ''; position: absolute; top: -9px; left: 22px; width: 44px; height: 17px; background: rgba(214, 184, 128, .6); border: 1px solid rgba(0,0,0,.06); transform: rotate(-4deg); box-shadow: 0 1px 2px rgba(0,0,0,.15); }
+  body[data-theme="kraft"] h1, body[data-theme="kraft"] h2, body[data-theme="kraft"] h3 { letter-spacing: .3px; }
+
+  /* Midnight Family: starfield background, gold gradient card edge, gold headings */
+  body[data-theme="midnight"] #app {
+    background-image: radial-gradient(1px 1px at 20% 30%, rgba(255,255,255,.55), transparent), radial-gradient(1px 1px at 70% 65%, rgba(255,255,255,.4), transparent),
+      radial-gradient(1px 1px at 40% 15%, rgba(255,255,255,.3), transparent), radial-gradient(1.5px 1.5px at 85% 75%, rgba(255,255,255,.5), transparent),
+      radial-gradient(1px 1px at 55% 45%, rgba(255,255,255,.3), transparent), radial-gradient(1px 1px at 10% 85%, rgba(255,255,255,.35), transparent);
+    background-attachment: fixed;
+  }
+  body[data-theme="midnight"] .card { border-top: 2px solid; border-image: linear-gradient(90deg, var(--accent), transparent 70%) 1; }
+  body[data-theme="midnight"] h1, body[data-theme="midnight"] h2, body[data-theme="midnight"] h3 { color: var(--accent); }
+
+  /* Retro Photo Album: film-grain vignette, dashed sprocket border, uppercase headings */
+  body[data-theme="retro"] #app { position: relative; }
+  body[data-theme="retro"] #app::after { content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 5; background: radial-gradient(circle, transparent 55%, rgba(60,40,20,.2) 100%); mix-blend-mode: multiply; }
+  body[data-theme="retro"] .card { border: 2px dashed var(--border); }
+  body[data-theme="retro"] h1, body[data-theme="retro"] h2, body[data-theme="retro"] h3 { text-transform: uppercase; letter-spacing: 1px; }
+
+  /* Pastel Nursery: cloud-dot background, blobby asymmetric cards, pill buttons */
+  body[data-theme="pastel"] #app {
+    background-image: radial-gradient(circle at 15% 12%, rgba(255,255,255,.65) 0 38px, transparent 39px), radial-gradient(circle at 85% 8%, rgba(255,255,255,.5) 0 28px, transparent 29px), radial-gradient(circle at 60% 90%, rgba(255,255,255,.5) 0 46px, transparent 47px);
+  }
+  body[data-theme="pastel"] .card { border-radius: 30px 12px 30px 12px; }
+  body[data-theme="pastel"] .btn, body[data-theme="pastel"] .fab { border-radius: 999px; }
+
+  /* Nature/Botanical: soft green gradient, organic leaf-corner cards, accent left border */
+  body[data-theme="nature"] #app { background: linear-gradient(180deg, #eef3e6, #e2ecd6 40%, #eef3e6); }
+  body[data-theme="nature"] .card { border-radius: 6px 26px 6px 26px; border-left: 3px solid var(--accent); }
+  body[data-theme="nature"] header.topbar h2::before { content: '🌿 '; }
+
+  /* Holographic/Neon: glass cards, animated gradient-ring border, gradient-text headings */
+  body[data-theme="neon"] .card { background: color-mix(in srgb, var(--card) 70%, transparent); backdrop-filter: blur(10px); position: relative; }
+  body[data-theme="neon"] .card::before {
+    content: ''; position: absolute; inset: 0; border-radius: inherit; padding: 1px;
+    background: linear-gradient(120deg, var(--accent), #4ecdc4, var(--accent)); background-size: 200% 200%; animation: auroraShift 6s ease infinite;
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0); -webkit-mask-composite: xor; mask-composite: exclude; pointer-events: none;
+  }
+  body[data-theme="neon"] h1, body[data-theme="neon"] h2, body[data-theme="neon"] h3 { background: linear-gradient(90deg, var(--accent), #4ecdc4); -webkit-background-clip: text; background-clip: text; color: transparent; }
+
+  /* Command Center: graph-paper grid background, terminal uppercase, status-bar cards */
+  body[data-theme="command"] #app { background-image: linear-gradient(rgba(59,167,255,.07) 1px, transparent 1px), linear-gradient(90deg, rgba(59,167,255,.07) 1px, transparent 1px); background-size: 22px 22px; }
+  body[data-theme="command"] .card { border-left: 3px solid var(--accent); }
+  body[data-theme="command"] h1, body[data-theme="command"] h2, body[data-theme="command"] h3, body[data-theme="command"] .nm { text-transform: uppercase; letter-spacing: 1px; }
+  body[data-theme="command"] .btn { text-transform: uppercase; letter-spacing: 1px; font-size: 13px; }
+
   /* ---- Header banner ---- */
   #bannerHeader { display: none; width: 100%; height: 120px; background-size: cover; background-position: center; }
   #bannerHeader.show { display: block; }
@@ -627,6 +691,13 @@ function applyTheme(themeOrId) {
   document.body.classList.toggle('theme-animated', t.anim === 'subtle' || t.anim === 'aurora');
   document.body.classList.toggle('theme-glow', t.anim === 'glow' || t.anim === 'aurora');
   document.body.classList.toggle('theme-aurora', t.anim === 'aurora');
+  // Bespoke per-preset CSS (background texture, card shape/decoration, heading treatment —
+  // see the "Per-theme signature treatments" block) hangs off this attribute. Custom
+  // (admin-built) themes intentionally don't get bespoke rules — there's no way to hand-craft
+  // texture/decoration CSS for a theme that doesn't exist until an admin saves it — so they
+  // fall back to the base color/font/radius/animation system only, hence 'custom' here for
+  // anything not a known preset id.
+  document.body.setAttribute('data-theme', THEME_PRESETS[t.id] ? t.id : 'custom');
   activeThemeId = t.id;
 }
 
