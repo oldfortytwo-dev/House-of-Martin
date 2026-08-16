@@ -125,10 +125,12 @@ suspecting the boolean logic.
   the Wall now — curated collections, reachable via Photos/Wall tab → "Show organized albums."
   - `photos` subcollection: url, storagePath, uploaderId, uploaderName, createdAt
 - **Post** (`posts/{id}`): text, photoUrl, photoStoragePath (both null if text-only), authorId,
-  authorName, createdAt. The Family Wall (Photos tab, now labeled 🧱 Wall in nav) — direct
-  text+photo posting to a family-wide feed, no album required. This is the primary photo-sharing
-  path now; Albums are secondary/curated. Family-wide only for now, no per-post audience
-  targeting yet (a natural extension of the picker already built for Events, not yet wired up here).
+  authorName, createdAt, audience ('everyone'|'custom'), invitedHouseholdIds[], invitedBranchIds[],
+  invitedUserIds[] — same shape and same addressing-not-access-control tradeoff as Event audience
+  (see that entry above). The Family Wall (Photos tab, labeled 🧱 Wall in nav) — direct text+photo
+  posting to the family (or a chosen household/branch/individual subset, shown as "Posted to: ..."
+  on the card), no album required. This is the primary photo-sharing path now; Albums are
+  secondary/curated, reachable via "Show organized albums."
 - **DigestSubmission** (`digestSubmissions/{id}`): text, submittedBy, submittedByName,
   includedInDigestAt (null until a real — not test — digest send marks it, via Admin SDK which
   bypasses rules). Any approved member can add one from Events tab → "Add to This Week's Family Email."
