@@ -153,6 +153,14 @@ exports.sendDigestNow = onCall({ secrets: [GMAIL_USER, GMAIL_APP_PASSWORD] }, as
   const testEmails = Array.isArray(request.data?.testEmails)
     ? request.data.testEmails.map(e => String(e).trim()).filter(Boolean)
     : undefined;
-  const result = await sendDigest(GMAIL_USER.value(), GMAIL_APP_PASSWORD.value(), testEmails);
-  return result;
+  try {
+    return await sendDigest(GMAIL_USER.value(), GMAIL_APP_PASSWORD.value(), testEmails);
+  } catch (err) {
+    console.error('sendDigest failed', err);
+    // Surface the real error to the admin instead of the generic "internal" the
+    // client would otherwise see — this callable is only ever admin-triggered,
+    // there's no sensitive-detail-leak concern the way there would be for a
+    // public-facing endpoint.
+    throw new HttpsError('internal', err.message || String(err));
+  }
 });

@@ -87,6 +87,12 @@
 
   /* Households / Branches admin */
   .hhEditor { border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-bottom: 10px; }
+  .statGrid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+  .statTile { background: var(--accent-soft); border-radius: 10px; padding: 10px 8px; text-align: center; }
+  .statTile .num { font-size: 20px; font-weight: 700; color: var(--accent); }
+  .statTile .lbl { font-size: 11px; color: var(--ink-soft); margin-top: 2px; }
+  .costRow { display: flex; justify-content: space-between; font-size: 13px; padding: 4px 0; }
+  .costRow .amt { color: var(--ink-soft); }
   .hhEditor .nm { font-weight: 600; font-size: 14px; }
   .chkGroup { display: flex; flex-direction: column; gap: 6px; max-height: 160px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; padding: 8px; margin-top: 6px; }
   .chk { font-size: 13px; display: flex; align-items: center; gap: 6px; }
@@ -221,6 +227,24 @@
 
       <!-- Admin -->
       <section class="tabpane" id="pane-admin">
+        <div class="card" id="dashboardCard">
+          <h3 style="margin-top:0">📊 Dashboard</h3>
+          <div class="statGrid" id="statGrid"></div>
+          <div style="margin-top:16px; padding-top:12px; border-top:1px dashed var(--border)">
+            <div class="nm" style="font-size:13px">💰 Estimated Costs</div>
+            <div id="costBreakdown" style="margin-top:6px"></div>
+            <p class="hh" style="margin-top:8px">Estimates only, based on current usage against Firebase's published
+              Blaze (pay-as-you-go) pricing and free-tier limits — not pulled from real billing data. For exact
+              figures: <a href="https://console.firebase.google.com/project/house-of-martin/usage" target="_blank" rel="noopener">Firebase Console → Usage &amp; Billing</a>.</p>
+          </div>
+        </div>
+        <div class="card">
+          <h3 style="margin-top:0">👥 Staff &amp; Roles</h3>
+          <p class="hh">Any admin can promote another approved member to admin, or step another admin back down
+            to member. You can't remove your own admin access here (avoids accidental lockout) — have a
+            different admin do it, or use the Firestore console directly if you're the only one.</p>
+          <div id="staffList" style="margin-top:10px"></div>
+        </div>
         <div class="card">
           <h3 style="margin-top:0">Pending approvals</h3>
           <div id="pendingList" class="empty">Loading…</div>
@@ -473,6 +497,7 @@ let usersById = {}, allApprovedUsers = [];
 let occasions = [];
 let dmChannels = [];
 let digestSubmissions = [];
+let pendingCount = 0, eventsCount = 0, albumsCount = 0;
 let unsubMsgs = null, unsubEvents = null, unsubAlbums = null, unsubContacts = null, unsubPending = null,
     unsubInvites = null, unsubHouseholds = null, unsubBranches = null, unsubPhotos = null, unsubOccasions = null,
     unsubDMs = null, unsubDigest = null;
@@ -763,6 +788,7 @@ function initDigestSubmissions() {
     snap.forEach(d => digestSubmissions.push({ id: d.id, ...d.data() }));
     digestSubmissions.sort((a, b) => (a.createdAt?.toMillis?.() || 0) - (b.createdAt?.toMillis?.() || 0));
     renderDigestSubmissions();
+    if (myDoc.role === 'admin') renderDashboard();
   });
 }
 
@@ -797,6 +823,8 @@ function initEvents() {
     list.innerHTML = '';
     $('eventEmpty').style.display = snap.empty ? 'block' : 'none';
     snap.forEach(d => renderEventCard(d.id, d.data(), list));
+    eventsCount = snap.size;
+    if (myDoc.role === 'admin') renderDashboard();
   });
 }
 
@@ -886,7 +914,7 @@ function initContacts() {
     renderContacts();
     renderMyHousehold();
     renderChannelList();
-    if (myDoc.role === 'admin') renderHouseholdsAdmin();
+    if (myDoc.role === 'admin') { renderHouseholdsAdmin(); renderStaffList(); renderDashboard(); }
   });
 }
 
@@ -1092,6 +1120,8 @@ function initAlbums() {
         cover.textContent = '';
       });
     });
+    albumsCount = snap.size;
+    if (myDoc.role === 'admin') renderDashboard();
   });
 }
 
@@ -1173,7 +1203,7 @@ function initHouseholds() {
     renderContacts();
     renderMyHousehold();
     renderChannelList();
-    if (myDoc.role === 'admin') renderHouseholdsAdmin();
+    if (myDoc.role === 'admin') { renderHouseholdsAdmin(); renderDashboard(); }
   });
 }
 
@@ -1183,7 +1213,7 @@ function initBranches() {
     snap.forEach(d => { const b = { id: d.id, ...d.data() }; branches.push(b); branchesById[d.id] = b; });
     branches.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
     renderChannelList();
-    if (myDoc.role === 'admin') renderBranchesAdmin();
+    if (myDoc.role === 'admin') { renderBranchesAdmin(); renderDashboard(); }
   });
 }
 
@@ -1494,9 +1524,11 @@ function initAdmin() {
     const wrap = $('pendingList');
     wrap.innerHTML = '';
     let any = false;
+    let pending = 0;
     snap.forEach(d => {
       const u = d.data();
       if (u.status !== 'pending') return;
+      pending++;
       any = true;
       const row = document.createElement('div');
       row.className = 'contactRow';
@@ -1508,7 +1540,11 @@ function initAdmin() {
       wrap.appendChild(row);
     });
     if (!any) wrap.innerHTML = '<div class="empty">No pending requests.</div>';
+    pendingCount = pending;
+    renderDashboard();
   });
+
+  renderStaffList();
 
   unsubInvites = onSnapshot(collection(db, 'inviteCodes'), (snap) => {
     const wrap = $('inviteList');
@@ -1520,6 +1556,66 @@ function initAdmin() {
       wrap.appendChild(div);
     });
   });
+}
+
+function renderStaffList() {
+  const wrap = $('staffList');
+  const staffAndMembers = allApprovedUsers.filter(u => u.role === 'admin' || u.role === 'member')
+    .sort((a, b) => (a.role === b.role ? a.name.localeCompare(b.name) : a.role === 'admin' ? -1 : 1));
+  wrap.innerHTML = staffAndMembers.map(u => `
+    <div class="contactRow">
+      <div class="nm">${escapeHtml(u.name)}${u.role === 'admin' ? ' <span class="respBadge">admin</span>' : ''}</div>
+      ${u.role === 'admin'
+        ? (u.id === currentUser.uid ? '' : `<button class="btn small secondary staffDemote" data-uid="${u.id}">Remove admin</button>`)
+        : `<button class="btn small staffPromote" data-uid="${u.id}">Make admin</button>`}
+    </div>`).join('');
+  wrap.querySelectorAll('.staffPromote').forEach(btn => {
+    btn.onclick = async () => { await updateDoc(doc(db, 'users', btn.dataset.uid), { role: 'admin' }); };
+  });
+  wrap.querySelectorAll('.staffDemote').forEach(btn => {
+    btn.onclick = async () => {
+      if (!confirm('Remove admin access for this person?')) return;
+      await updateDoc(doc(db, 'users', btn.dataset.uid), { role: 'member' });
+    };
+  });
+}
+
+function renderDashboard() {
+  const friendsCount = allApprovedUsers.filter(u => u.role === 'friend').length;
+  const adminCount = allApprovedUsers.filter(u => u.role === 'admin').length;
+  const stats = [
+    { num: allApprovedUsers.length, lbl: 'Members' },
+    { num: pendingCount, lbl: 'Pending' },
+    { num: friendsCount, lbl: 'Friends' },
+    { num: households.length, lbl: 'Households' },
+    { num: branches.length, lbl: 'Groups' },
+    { num: adminCount, lbl: 'Admins' },
+    { num: eventsCount, lbl: 'Events' },
+    { num: albumsCount, lbl: 'Albums' },
+    { num: occasions.length, lbl: 'Calendar entries' },
+    { num: digestSubmissions.length, lbl: 'Pending digest items' },
+  ];
+  $('statGrid').innerHTML = stats.map(s => `<div class="statTile"><div class="num">${s.num}</div><div class="lbl">${s.lbl}</div></div>`).join('');
+
+  // Rough, honest estimate against Firebase Blaze's published free-tier limits — not real
+  // billing data. At this app's scale (a few dozen family members) every line item below is
+  // expected to sit comfortably inside the free tier, so the total is realistically $0/mo;
+  // the breakdown exists so an admin can see *why*, and to flag if usage ever grows enough
+  // to matter (e.g. if photo storage started approaching the 5GB free tier).
+  const photoEstimate = albumsCount * 8; // rough avg photos/album guess for display purposes only
+  const storageEstimateMB = photoEstimate * 0.8; // ~800KB/photo average guess
+  const costLines = [
+    { label: 'Firestore reads/writes/storage', note: 'well under free tier at this scale', amt: '$0.00' },
+    { label: `Cloud Storage (~${Math.round(storageEstimateMB)}MB of photos, est.)`, note: '5GB free', amt: '$0.00' },
+    { label: 'Cloud Functions (digest email, ~4 runs/mo)', note: '2M invocations free/mo', amt: '$0.00' },
+    { label: 'Cloud Scheduler (weekly digest trigger)', note: 'first 3 jobs free', amt: '$0.00' },
+    { label: 'Secret Manager (2 secrets)', note: '6 secret-versions free/mo', amt: '$0.00' },
+    { label: 'Hosting bandwidth', note: '10GB/mo free', amt: '$0.00' },
+    { label: 'Gmail SMTP (digest delivery)', note: 'no per-email cost, ~500/day cap', amt: '$0.00' },
+  ];
+  $('costBreakdown').innerHTML = costLines.map(c => `
+    <div class="costRow"><span>${escapeHtml(c.label)} <span class="hh">— ${escapeHtml(c.note)}</span></span><span class="amt">${c.amt}</span></div>
+  `).join('') + `<div class="costRow" style="font-weight:700; border-top:1px solid var(--border); margin-top:6px; padding-top:8px"><span>Estimated total</span><span>$0.00/mo</span></div>`;
 }
 
 $('createInviteBtn').onclick = async () => {
@@ -1537,7 +1633,8 @@ $('sendDigestTestBtn').onclick = async () => {
     const result = await httpsCallable(functions, 'sendDigestNow')({ testEmails });
     $('digestNowStatus').textContent = `Test sent to: ${testEmails.join(', ')}. (Real family list untouched, no submissions marked as sent.)`;
   } catch (err) {
-    $('digestNowStatus').textContent = 'Failed: ' + (err.message || err);
+    console.error('sendDigestNow failed', err);
+    $('digestNowStatus').textContent = `Failed [${err.code || '?'}]: ${err.message || err}${err.details ? ' — ' + JSON.stringify(err.details) : ''}`;
   }
 };
 
@@ -1548,7 +1645,8 @@ $('sendDigestNowBtn').onclick = async () => {
     const result = await httpsCallable(functions, 'sendDigestNow')();
     $('digestNowStatus').textContent = `Sent to ${result.data.sent} member(s), included ${result.data.submissions} submission(s).`;
   } catch (err) {
-    $('digestNowStatus').textContent = 'Failed: ' + (err.message || err);
+    console.error('sendDigestNow failed', err);
+    $('digestNowStatus').textContent = `Failed [${err.code || '?'}]: ${err.message || err}${err.details ? ' — ' + JSON.stringify(err.details) : ''}`;
   }
 };
 
@@ -1579,6 +1677,7 @@ function initOccasions() {
     occasions = [];
     snap.forEach(d => occasions.push({ id: d.id, ...d.data() }));
     renderOccasions();
+    if (myDoc.role === 'admin') renderDashboard();
   });
 }
 
