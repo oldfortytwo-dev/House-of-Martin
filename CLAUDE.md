@@ -155,6 +155,18 @@ Applied once immediately at script load — before Firebase auth even resolves �
 member's sign-in screen matches what they last picked on that device, not a flash of default
 then a swap.
 
+**Command Center gets real structural divergence, not just decoration** — the one place in the
+app where `activeThemeId` branches actual rendering logic, not just CSS. `renderWallFeed()`
+(app/index.html) checks `activeThemeId === 'command'` and renders the same `posts` data as a
+compact terminal-style log (`.wallLog`/`.wallLogLine`, `[HH:MM] AUTHOR: text`) instead of
+Facebook-style `.wallPost` cards; nav labels lose their emoji for bracket-style `[tabname]` via a
+`<span class="lbl">` wrapper + `::before`/`::after`. This was the direct answer to "themes still
+feel vanilla, make the non-Facebook end genuinely different" — the other 9 presets are still
+CSS-only. If another theme ever wants the same treatment, follow this pattern: keep the
+Firestore query/rules/compose logic identical, branch only the render function, and cache the
+last snapshot (`_lastWallSnap`) so switching themes mid-view re-renders immediately instead of
+waiting for the next Firestore update.
+
 **Custom editor** (admin-only, 🎨 button in the header → "Build a custom theme"): 4 color pickers
 (bg/card/ink/accent) + corner-style/heading-font/animation dropdowns. The 3 remaining tokens
 (`inkSoft`, `accentSoft`, `border`) are auto-derived via CSS `color-mix()` rather than asking for
