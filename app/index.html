@@ -811,35 +811,47 @@ $('pendingSignOut').onclick = () => signOut(auth);
 $('signOutBtn').onclick = () => signOut(auth);
 
 // ---------- Auth state / routing ----------
-onAuthStateChanged(auth, async (user) => {
+let unsubMyDoc = null;
+let _shellInitialized = false;
+
+onAuthStateChanged(auth, (user) => {
   cleanupListeners();
+  if (unsubMyDoc) { unsubMyDoc(); unsubMyDoc = null; }
   currentUser = user;
+  _shellInitialized = false;
   if (!user) {
     show('authScreen');
     return;
   }
-  const snap = await getDoc(doc(db, 'users', user.uid));
-  myDoc = snap.exists() ? snap.data() : null;
+  // Live, not a one-time read: status can flip out from under a pending user — an admin
+  // approving them, or autoApproveKnownEmail matching their email — and without this being
+  // reactive they'd be stuck staring at "pending" until they manually refresh, which defeats
+  // the point of "instant" auto-approval.
+  unsubMyDoc = onSnapshot(doc(db, 'users', user.uid), (snap) => {
+    myDoc = snap.exists() ? snap.data() : null;
 
-  if (!myDoc || myDoc.status !== 'approved') {
-    show('pendingScreen');
-    return;
-  }
-  show('shell');
-  $('whoami').textContent = `${myDoc.name} · ${myDoc.role}`;
-  $('adminTabBtn').style.display = myDoc.role === 'admin' ? 'flex' : 'none';
-  initHouseholds();
-  initBranches();
-  initChannels();
-  initEvents();
-  initAlbums();
-  initWall();
-  initContacts();
-  initOccasions();
-  initDMs();
-  initDigestSubmissions();
-  initAppearance();
-  if (myDoc.role === 'admin') { initAdmin(); }
+    if (!myDoc || myDoc.status !== 'approved') {
+      show('pendingScreen');
+      return;
+    }
+    show('shell');
+    $('whoami').textContent = `${myDoc.name} · ${myDoc.role}`;
+    $('adminTabBtn').style.display = myDoc.role === 'admin' ? 'flex' : 'none';
+    if (_shellInitialized) return; // avoid re-subscribing everything on every unrelated profile-doc change
+    _shellInitialized = true;
+    initHouseholds();
+    initBranches();
+    initChannels();
+    initEvents();
+    initAlbums();
+    initWall();
+    initContacts();
+    initOccasions();
+    initDMs();
+    initDigestSubmissions();
+    initAppearance();
+    if (myDoc.role === 'admin') { initAdmin(); }
+  });
 });
 
 function show(id) {

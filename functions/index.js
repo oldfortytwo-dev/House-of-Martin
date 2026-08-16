@@ -2,6 +2,7 @@ const { initializeApp } = require('firebase-admin/app');
 const { getFirestore, Timestamp } = require('firebase-admin/firestore');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
 const { onCall, HttpsError } = require('firebase-functions/v2/https');
+const { onDocumentCreated } = require('firebase-functions/v2/firestore');
 const { defineSecret } = require('firebase-functions/params');
 const nodemailer = require('nodemailer');
 
@@ -163,4 +164,53 @@ exports.sendDigestNow = onCall({ secrets: [GMAIL_USER, GMAIL_APP_PASSWORD] }, as
     // public-facing endpoint.
     throw new HttpsError('internal', err.message || String(err));
   }
+});
+
+// Auto-approve a new signup if their email matches a household's extraContacts entry (i.e. someone
+// already known from the imported address book / manually added by an admin). A pending user can't
+// read the households collection themselves (firestore.rules requires isApprovedMember()), so this
+// has to run server-side via the Admin SDK, which bypasses rules entirely — that's also what keeps
+// it safe: the match logic isn't exposed to the client, only its outcome (approved or still pending).
+//
+// Security note: this trades a small amount of rigor for a lot of admin convenience. Firebase Auth
+// doesn't verify email ownership on signup by default, so someone who already holds a valid invite
+// code (the pre-existing gate — this doesn't change that) could type in a *known* relative's email
+// address and get auto-approved without actually controlling that mailbox. Consistent with this
+// app's existing low-security/high-convenience posture for a private family app (see storage.rules'
+// albums/ comment for the same tradeoff elsewhere), but worth knowing if the invite code ever leaks
+// beyond trusted family. The mitigation, if wanted later, is requiring Firebase email verification
+// before auto-approval — not implemented here since it wasn't asked for.
+exports.autoApproveKnownEmail = onDocumentCreated('users/{uid}', async (event) => {
+  const snap = event.data;
+  if (!snap) return;
+  const user = snap.data();
+  if (!user.email || user.status !== 'pending') return;
+  const emailLower = user.email.toLowerCase();
+
+  const householdsSnap = await db.collection('households').get();
+  for (const hhDoc of householdsSnap.docs) {
+    const hh = hhDoc.data();
+    const extraContacts = hh.extraContacts || [];
+    const matchIdx = extraContacts.findIndex(ec => (ec.email || '').toLowerCase() === emailLower);
+    if (matchIdx === -1) continue;
+
+    const matched = extraContacts[matchIdx];
+    const remainingContacts = extraContacts.filter((_, i) => i !== matchIdx);
+    const memberIds = hh.memberIds || [];
+    const batch = db.batch();
+    batch.update(snap.ref, {
+      status: 'approved',
+      householdId: hhDoc.id,
+      phone: user.phone || matched.phone || '',
+      birthdate: user.birthdate || matched.birthdate || null
+    });
+    batch.update(hhDoc.ref, {
+      memberIds: memberIds.includes(event.params.uid) ? memberIds : [...memberIds, event.params.uid],
+      extraContacts: remainingContacts
+    });
+    await batch.commit();
+    console.log(`Auto-approved ${user.email} (uid ${event.params.uid}) into household ${hhDoc.id}, matched extraContacts entry "${matched.name}"`);
+    return;
+  }
+  // No match — stays pending for the normal manual approval in Admin tab.
 });
