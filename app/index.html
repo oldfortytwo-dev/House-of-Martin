@@ -90,6 +90,9 @@
   .chkGroup { display: flex; flex-direction: column; gap: 6px; max-height: 160px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; padding: 8px; margin-top: 6px; }
   .chk { font-size: 13px; display: flex; align-items: center; gap: 6px; }
   .hhRsvpBlock { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border); }
+  .noAccountBadge { font-size: 10px; background: var(--border); color: var(--ink-soft); padding: 2px 6px; border-radius: 8px; margin-left: 6px; font-weight: 600; vertical-align: middle; }
+  .ecSection { margin-top: 14px; padding-top: 10px; border-top: 1px dashed var(--border); }
+  textarea.bulkPaste { width: 100%; padding: 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; font-family: inherit; }
 
   /* Photos */
   .albumGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -609,26 +612,36 @@ function initContacts() {
 
 function renderContacts() {
   const wrap = $('contactList');
-  if (!allApprovedUsers.length) { wrap.innerHTML = '<div class="empty">No approved members yet.</div>'; return; }
-
   const byHousehold = {};
   allApprovedUsers.forEach(u => {
     const key = (u.householdId && householdsById[u.householdId]) ? u.householdId : 'none';
     (byHousehold[key] = byHousehold[key] || []).push(u);
   });
-  const orderedKeys = [...households.map(h => h.id).filter(id => byHousehold[id]), ...(byHousehold['none'] ? ['none'] : [])];
+  const hhIdsWithContent = households
+    .filter(h => (byHousehold[h.id] && byHousehold[h.id].length) || (h.extraContacts && h.extraContacts.length))
+    .map(h => h.id);
+  const orderedKeys = [...hhIdsWithContent, ...(byHousehold['none'] ? ['none'] : [])];
+  if (!orderedKeys.length) { wrap.innerHTML = '<div class="empty">No approved members yet.</div>'; return; }
 
   wrap.innerHTML = orderedKeys.map(key => {
     const hh = key !== 'none' ? householdsById[key] : null;
-    const contactLine = hh && (hh.phone || hh.address)
-      ? `<span class="hh">${escapeHtml(hh.phone || '')}${hh.phone && hh.address ? ' · ' : ''}${escapeHtml(hh.address || '')}</span>` : '';
+    const infoBits = [];
+    if (hh && hh.phone) infoBits.push(escapeHtml(hh.phone));
+    if (hh && hh.address) infoBits.push(escapeHtml(hh.address));
+    if (hh && hh.anniversary) infoBits.push('💍 ' + new Date(hh.anniversary + 'T00:00:00').toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }));
+    const contactLine = infoBits.length ? `<span class="hh">${infoBits.join(' · ')}</span>` : '';
     const header = `<div class="hhHeader"><span>${hh ? '🏠 ' + escapeHtml(hh.name) : 'No household set'}</span>${contactLine}</div>`;
-    const rows = byHousehold[key].map(u => `
+    const memberRows = (byHousehold[key] || []).map(u => `
       <div class="contactRow">
         <div><div class="nm">${escapeHtml(u.name)}${hh && hh.responderId === u.id ? '<span class="respBadge">responder</span>' : ''}${ageBadgeHtml(u)}${canEditProfile(u.id) ? `<button class="editBtn" data-uid="${u.id}">✎</button>` : ''}</div></div>
         <div class="info">${escapeHtml(u.email || '')}${u.phone ? '<br>' + escapeHtml(u.phone) : ''}</div>
       </div>`).join('');
-    return header + rows;
+    const extraRows = ((hh && hh.extraContacts) || []).map(ec => `
+      <div class="contactRow">
+        <div><div class="nm">${escapeHtml(ec.name)}${ageBadgeHtml(ec)}<span class="noAccountBadge">no account</span></div></div>
+        <div class="info">${ec.phone ? escapeHtml(ec.phone) : ''}</div>
+      </div>`).join('');
+    return header + memberRows + extraRows;
   }).join('');
   wrap.querySelectorAll('.editBtn').forEach(b => { b.onclick = () => openEditProfile(b.dataset.uid); });
 }
@@ -760,7 +773,7 @@ function initBranches() {
 $('createHouseholdBtn').onclick = async () => {
   const name = $('newHouseholdName').value.trim();
   if (!name) return;
-  await addDoc(collection(db, 'households'), { name, memberIds: [], responderId: null, phone: '', address: '', createdBy: currentUser.uid, createdAt: serverTimestamp() });
+  await addDoc(collection(db, 'households'), { name, memberIds: [], responderId: null, phone: '', address: '', anniversary: null, extraContacts: [], createdBy: currentUser.uid, createdAt: serverTimestamp() });
   $('newHouseholdName').value = '';
 };
 
@@ -779,6 +792,11 @@ function renderHouseholdsAdmin() {
       const u = usersById[uid];
       return `<option value="${uid}" ${hh.responderId === uid ? 'selected' : ''}>${escapeHtml(u ? u.name : uid)}</option>`;
     }).join('') || '<option value="">— add &amp; save members first —</option>';
+    const extraRows = (hh.extraContacts || []).map(ec => `
+      <div class="contactRow">
+        <div><div class="nm">${escapeHtml(ec.name)}${ageBadgeHtml(ec)}${ec.phone ? ` <span class="hh">${escapeHtml(ec.phone)}</span>` : ''}</div></div>
+        <button class="editBtn ecDel" data-id="${ec.id}">✕</button>
+      </div>`).join('') || '<div class="hh">None yet</div>';
     box.innerHTML = `
       <div class="nm">${escapeHtml(hh.name)}</div>
       <div class="chkGroup">${memberOptions}</div>
@@ -788,6 +806,30 @@ function renderHouseholdsAdmin() {
       <div style="display:flex; gap:8px; margin-top:8px">
         <button class="btn small hhSave">Save members</button>
         <button class="btn secondary small hhDelete">Delete household</button>
+      </div>
+
+      <div class="ecSection">
+        <div class="field"><label>Household phone</label><input type="tel" class="hhPhone" value="${escapeHtml(hh.phone || '')}"></div>
+        <div class="field"><label>Household address</label><input type="text" class="hhAddress" value="${escapeHtml(hh.address || '')}"></div>
+        <div class="field"><label>Anniversary</label><input type="date" class="hhAnniversary" value="${hh.anniversary || ''}"></div>
+        <button class="btn small hhSaveInfo">Save contact info</button>
+      </div>
+
+      <div class="ecSection">
+        <div class="nm" style="font-size:13px">Family members without their own account</div>
+        <div style="margin-top:6px">${extraRows}</div>
+        <div class="field" style="margin-top:10px"><label>Add one (name, birthdate, phone)</label>
+          <div style="display:flex; gap:6px; flex-wrap:wrap">
+            <input type="text" class="ecName" placeholder="Name" style="flex:2; min-width:100px">
+            <input type="date" class="ecBirthdate" style="flex:1; min-width:120px">
+            <input type="tel" class="ecPhone" placeholder="Phone (optional)" style="flex:1; min-width:100px">
+          </div>
+        </div>
+        <button class="btn small secondary ecAddOne">Add</button>
+        <div class="field" style="margin-top:10px"><label>Or paste a list — one per line: Name, YYYY-MM-DD, phone</label>
+          <textarea class="ecBulk bulkPaste" rows="3" placeholder="Grandma Rose, 1948-03-14&#10;Jimmy Martin, 2011-07-02, 555-123-4567"></textarea>
+        </div>
+        <button class="btn small secondary ecAddBulk">Add from list</button>
       </div>
     `;
     box.querySelector('.hhSave').onclick = async () => {
@@ -806,6 +848,40 @@ function renderHouseholdsAdmin() {
       (hh.memberIds || []).forEach(uid => batch.update(doc(db, 'users', uid), { householdId: null }));
       batch.delete(doc(db, 'households', hh.id));
       await batch.commit();
+    };
+    box.querySelector('.hhSaveInfo').onclick = async () => {
+      await updateDoc(doc(db, 'households', hh.id), {
+        phone: box.querySelector('.hhPhone').value.trim(),
+        address: box.querySelector('.hhAddress').value.trim(),
+        anniversary: box.querySelector('.hhAnniversary').value || null
+      });
+    };
+    box.querySelectorAll('.ecDel').forEach(btn => {
+      btn.onclick = async () => {
+        const updated = (hh.extraContacts || []).filter(ec => ec.id !== btn.dataset.id);
+        await updateDoc(doc(db, 'households', hh.id), { extraContacts: updated });
+      };
+    });
+    box.querySelector('.ecAddOne').onclick = async () => {
+      const name = box.querySelector('.ecName').value.trim();
+      if (!name) return;
+      const entry = {
+        id: crypto.randomUUID(), name,
+        birthdate: box.querySelector('.ecBirthdate').value || null,
+        phone: box.querySelector('.ecPhone').value.trim()
+      };
+      await updateDoc(doc(db, 'households', hh.id), { extraContacts: [...(hh.extraContacts || []), entry] });
+      box.querySelector('.ecName').value = ''; box.querySelector('.ecBirthdate').value = ''; box.querySelector('.ecPhone').value = '';
+    };
+    box.querySelector('.ecAddBulk').onclick = async () => {
+      const lines = box.querySelector('.ecBulk').value.split('\n').map(l => l.trim()).filter(Boolean);
+      const newEntries = lines.map(line => {
+        const [name, birthdate, phone] = line.split(',').map(p => (p || '').trim());
+        return name ? { id: crypto.randomUUID(), name, birthdate: birthdate || null, phone: phone || '' } : null;
+      }).filter(Boolean);
+      if (!newEntries.length) return;
+      await updateDoc(doc(db, 'households', hh.id), { extraContacts: [...(hh.extraContacts || []), ...newEntries] });
+      box.querySelector('.ecBulk').value = '';
     };
     wrap.appendChild(box);
   });
