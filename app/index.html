@@ -151,9 +151,15 @@
   .wallAlbumTile .cap { font-size: 12px; margin-top: 6px; text-align: center; }
   .wallAlbumTile .wallDel { position: absolute; top: 2px; right: 2px; }
 
-  /* ---- Header banner ---- */
-  #bannerHeader { display: none; width: 100%; height: 120px; background-size: cover; background-position: center; }
-  #bannerHeader.show { display: block; }
+  /* ---- Header banner: filmstrip of a few photos, each a fixed-height cover-crop tile
+     so mismatched source aspect ratios never stretch or distort ---- */
+  #bannerHeader { display: none; width: 100%; overflow-x: auto; overflow-y: hidden; gap: 3px; scroll-snap-type: x proximity; -webkit-overflow-scrolling: touch; }
+  #bannerHeader.show { display: flex; }
+  #bannerHeader .bannerTile { flex: 0 0 auto; height: 110px; width: 146px; object-fit: cover; display: block; scroll-snap-align: start; cursor: pointer; }
+  #bannerPhotoList { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  #bannerPhotoList .bannerThumbWrap { position: relative; width: 64px; height: 64px; }
+  #bannerPhotoList img { width: 100%; height: 100%; object-fit: cover; border-radius: 6px; display: block; }
+  #bannerPhotoList .bannerThumbDel { position: absolute; top: -6px; right: -6px; background: rgba(0,0,0,.65); color: #fff; border: none; border-radius: 50%; width: 20px; height: 20px; font-size: 11px; cursor: pointer; line-height: 1; }
 
   /* ---- Theme picker / editor ---- */
   .themeGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -638,9 +644,10 @@
       <div id="themeAdminActions" style="display:none; margin-top:14px; padding-top:10px; border-top:1px dashed var(--border)">
         <button class="btn small secondary" id="setFamilyDefaultBtn">🌟 Set current theme as family default</button>
         <button class="btn small secondary" id="openThemeEditorBtn" style="margin-top:8px">🛠 Build a custom theme</button>
-        <button class="btn small secondary" id="setBannerBtn" style="margin-top:8px">🖼 Set header banner photo</button>
-        <input type="file" id="bannerFileInput" accept="image/*" style="display:none">
-        <button class="btn small secondary" id="clearBannerBtn" style="margin-top:8px">Remove header banner</button>
+        <button class="btn small secondary" id="setBannerBtn" style="margin-top:8px">🖼 Add banner photo(s)</button>
+        <input type="file" id="bannerFileInput" accept="image/*" multiple style="display:none">
+        <div class="hh" id="bannerCountNote" style="margin-top:6px"></div>
+        <div id="bannerPhotoList"></div>
       </div>
       <button class="btn secondary" id="themeCloseBtn" style="margin-top:14px">Close</button>
     </div>
@@ -749,7 +756,7 @@ const THEME_PRESETS = {
 let customThemes = [];
 let familyDefaultThemeId = 'classic';
 let activeThemeId = 'classic';
-let bannerUrl = null;
+let bannerPhotos = [];
 
 function allThemes() { return [...Object.values(THEME_PRESETS), ...customThemes]; }
 function getTheme(id) { return allThemes().find(t => t.id === id) || THEME_PRESETS.classic; }
@@ -2535,27 +2542,53 @@ $('applyBirthdaysBtn').onclick = async () => {
 };
 
 // ---------- Theming (live sync + UI) ----------
+const BANNER_PHOTO_LIMIT = 6;
+
 function initAppearance() {
   unsubAppearance = onSnapshot(doc(db, 'config', 'appearance'), (snap) => {
     const data = snap.exists() ? snap.data() : {};
     familyDefaultThemeId = data.defaultThemeId || 'classic';
     customThemes = data.customThemes || [];
-    bannerUrl = data.bannerUrl || null;
+    bannerPhotos = data.bannerPhotos || [];
     loadAndApplyMyTheme();
     updateBannerDisplay();
+    renderBannerPhotoList();
     if ($('themeModalBg').classList.contains('open')) renderThemeGrid();
   });
 }
 
 function updateBannerDisplay() {
   const el = $('bannerHeader');
-  if (bannerUrl) {
-    el.style.backgroundImage = `url(${bannerUrl})`;
+  if (bannerPhotos.length) {
+    el.innerHTML = bannerPhotos.map(p => `<img class="bannerTile" src="${p.url}" alt="">`).join('');
+    el.querySelectorAll('.bannerTile').forEach((img, i) => { img.onclick = () => window.open(bannerPhotos[i].url, '_blank'); });
     el.classList.add('show');
   } else {
     el.classList.remove('show');
-    el.style.backgroundImage = '';
+    el.innerHTML = '';
   }
+}
+
+function renderBannerPhotoList() {
+  const wrap = $('bannerPhotoList');
+  if (!wrap) return;
+  $('bannerCountNote').textContent = `${bannerPhotos.length} / ${BANNER_PHOTO_LIMIT} photos in the filmstrip`;
+  wrap.innerHTML = bannerPhotos.map((p, i) => `
+    <div class="bannerThumbWrap">
+      <img src="${p.url}" alt="">
+      <button class="bannerThumbDel" data-i="${i}">✕</button>
+    </div>`).join('');
+  wrap.querySelectorAll('.bannerThumbDel').forEach(btn => {
+    btn.onclick = async () => {
+      const i = +btn.dataset.i;
+      const removed = bannerPhotos[i];
+      const updated = bannerPhotos.filter((_, idx) => idx !== i);
+      await setDoc(doc(db, 'config', 'appearance'), { bannerPhotos: updated }, { merge: true });
+      if (removed && removed.storagePath) {
+        try { await deleteObject(ref(storage, removed.storagePath)); } catch (err) { console.warn('Storage delete failed', err); }
+      }
+    };
+  });
 }
 
 $('themeBtn').onclick = () => {
@@ -2594,17 +2627,23 @@ $('setFamilyDefaultBtn').onclick = async () => {
 
 $('setBannerBtn').onclick = () => $('bannerFileInput').click();
 $('bannerFileInput').addEventListener('change', async (e) => {
-  const file = e.target.files[0];
+  const files = Array.from(e.target.files || []);
   e.target.value = '';
-  if (!file) return;
-  const sRef = ref(storage, `appearance/banner_${Date.now()}_${file.name}`);
-  await uploadBytes(sRef, file, { customMetadata: { uploaderId: currentUser.uid } });
-  const url = await getDownloadURL(sRef);
-  await setDoc(doc(db, 'config', 'appearance'), { bannerUrl: url }, { merge: true });
+  if (!files.length) return;
+  const room = BANNER_PHOTO_LIMIT - bannerPhotos.length;
+  if (room <= 0) { $('bannerCountNote').textContent = `Filmstrip is full (max ${BANNER_PHOTO_LIMIT}) — remove one first.`; return; }
+  const toUpload = files.slice(0, room);
+  $('bannerCountNote').textContent = `Uploading ${toUpload.length} photo(s)…`;
+  const uploaded = [];
+  for (const file of toUpload) {
+    const storagePath = `appearance/banner_${Date.now()}_${file.name}`;
+    const sRef = ref(storage, storagePath);
+    await uploadBytes(sRef, file, { customMetadata: { uploaderId: currentUser.uid } });
+    const url = await getDownloadURL(sRef);
+    uploaded.push({ url, storagePath });
+  }
+  await setDoc(doc(db, 'config', 'appearance'), { bannerPhotos: [...bannerPhotos, ...uploaded] }, { merge: true });
 });
-$('clearBannerBtn').onclick = async () => {
-  await setDoc(doc(db, 'config', 'appearance'), { bannerUrl: null }, { merge: true });
-};
 
 // ---------- Custom theme editor ----------
 let _teReturnThemeId = null;
