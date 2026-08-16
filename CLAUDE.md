@@ -163,7 +163,11 @@ time; retrying after enabling it works immediately, no propagation delay observe
 
 ## Roles & Privacy
 
-- **Admin**: approve members/friends, manage households/branches, generate invite codes, full visibility
+- **Admin**: approve members/friends, manage households/branches, generate invite codes, full visibility,
+  promote/demote other admins (Admin tab → Staff & Roles). Multiple admins are fully supported — `role`
+  is just a field, nothing in rules or code assumes a single admin. Self-demote is hidden in the UI to
+  prevent accidental lockout (a *different* admin has to do it, or edit Firestore directly if you're
+  down to one).
 - **Member**: full access to family/household/branch channels, directory, events, photos; can RSVP for self or household (if responder)
 - **Family friend**: access limited to specific invited channels/events/albums only — no full directory, no unrelated content
 
@@ -180,7 +184,8 @@ Facebook/copy fallback), household self-service editing for the responder
 handoff/extraContacts; member add-remove and moving a contact to a *different*
 household stay admin-only since those touch documents the responder doesn't
 own), DM channels (genuinely private, not just UI-hidden — see the Firestore
-rules gotcha above), weekly digest email (Cloud Functions — see section above).
+rules gotcha above), weekly digest email (Cloud Functions — see section above),
+multi-admin role management, admin Dashboard (live counts + estimated costs).
 
 **Deferred:** family tree view, item sign-up lists, native app wrapper,
 deactivating a real account holder's login (vs. the deceased-toggle already
