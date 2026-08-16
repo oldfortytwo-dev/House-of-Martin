@@ -210,6 +210,28 @@ time; retrying after enabling it works immediately, no propagation delay observe
   "bad credentials" rejection — proof the whole pipeline was correct before real credentials were
   wired in. `.secret.local` is gitignored (`*.local`) and was deleted after testing.
 
+## Auto-approval on known email (Cloud Function) + reactive auth flow
+
+`autoApproveKnownEmail` (Firestore trigger on `users/{uid}` create, first Firestore-triggered — as
+opposed to scheduled/callable — function in this project; its first deploy failed with an Eventarc
+permission-propagation error and succeeded on retry ~90s later, same class of "first time" delay as
+other Google Cloud API enablement in this project) — if a new signup's email matches an email
+already on file in any household's `extraContacts`, they're auto-approved and linked into that
+household immediately, and the now-redundant `extraContacts` entry is removed. No match leaves them
+`pending` for the normal manual review. Documented security tradeoff in the function's own comment:
+Firebase Auth doesn't verify email ownership on signup, so this trades a bit of rigor for a lot of
+admin convenience — consistent with this app's existing posture elsewhere (e.g. storage.rules'
+albums/ comment), but worth knowing if the invite code ever circulates beyond trusted family.
+
+This surfaced a real pre-existing gap: the pending→approved transition (`onAuthStateChanged` in
+app/index.html) used to be a **one-time** `getDoc`, not a live listener, so nobody — auto-approved
+or manually approved via the admin Pending Approvals button — would actually see the app until they
+refreshed. Fixed by converting it to a live `onSnapshot` on the signed-in user's own doc, guarded by
+a `_shellInitialized` flag so the various `init*()` calls still only fire once per session rather
+than re-subscribing everything on every unrelated profile-doc change. Verified with three separate
+emulator signups, including a "sign up and just wait" test that flipped from the pending screen to
+the full shell live and unprompted in under 5 seconds, no refresh.
+
 ## Roles & Privacy
 
 - **Admin**: approve members/friends, manage households/branches, generate invite codes, full visibility,
