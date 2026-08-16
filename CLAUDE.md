@@ -136,7 +136,9 @@ suspecting the boolean logic.
   bypasses rules). Any approved member can add one from Events tab → "Add to This Week's Family Email."
 - **Appearance config** (`config/appearance`, single doc): defaultThemeId (admin-set family
   default), customThemes[] (admin-built, same shape as the built-in presets — see THEME_PRESETS in
-  app/index.html), bannerUrl (header banner photo, Storage path `appearance/{fileName}`). Read: any
+  app/index.html), bannerPhotos[] (header banner filmstrip — up to 6 {url, storagePath} objects,
+  Storage path `appearance/{fileName}`; each renders as its own fixed-size cover-cropped tile in a
+  horizontally scrollable row, not one stretched photo — see "Header banner" CSS). Read: any
   approved member. Write: admin-only.
 
 ## Theme System
