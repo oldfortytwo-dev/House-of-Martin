@@ -103,6 +103,13 @@
   .photoTile { position: relative; aspect-ratio: 1; border-radius: 8px; overflow: hidden; background: var(--accent-soft); }
   .photoTile img { width: 100%; height: 100%; object-fit: cover; display: block; cursor: pointer; }
   .photoTile .photoDel { position: absolute; top: 3px; right: 3px; background: rgba(0,0,0,.55); color: #fff; border: none; border-radius: 50%; width: 22px; height: 22px; font-size: 12px; cursor: pointer; line-height: 1; }
+  .photoTile .photoShare { position: absolute; bottom: 3px; right: 3px; background: rgba(0,0,0,.55); color: #fff; border: none; border-radius: 6px; padding: 3px 6px; font-size: 12px; cursor: pointer; line-height: 1; }
+
+  /* Share */
+  .cardHead { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+  .cardHead h3 { flex: 1; }
+  .shareBtn { border: 1px solid var(--border); background: var(--card); border-radius: 8px; padding: 6px 10px; font-size: 13px; cursor: pointer; flex-shrink: 0; white-space: nowrap; }
+  .shareOption { display: block; width: 100%; text-align: left; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); font-size: 15px; margin-bottom: 8px; cursor: pointer; text-decoration: none; color: var(--ink); }
   .uploadStatus { font-size: 13px; color: var(--ink-soft); margin-top: 8px; min-height: 16px; }
 
   .fab { position: fixed; right: 18px; bottom: calc(var(--nav-h) + 18px); width: 52px; height: 52px; border-radius: 50%; background: var(--accent); color: #fff; border: none; font-size: 26px; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,.25); }
@@ -275,6 +282,16 @@
       <div class="photoGrid" id="adPhotoGrid"></div>
       <div class="empty" id="adPhotoEmpty" style="display:none">No photos yet — add the first one.</div>
       <button class="btn secondary" id="adCloseBtn">Close</button>
+    </div>
+  </div>
+
+  <!-- Share modal (fallback for browsers without the native share sheet) -->
+  <div class="modalBg" id="shareModalBg">
+    <div class="modalSheet">
+      <h3>Share</h3>
+      <button class="shareOption" id="shareCopyBtn">📋 Copy text to paste anywhere</button>
+      <a class="shareOption" id="shareFbBtn" href="#" target="_blank" rel="noopener">📘 Share to Facebook</a>
+      <button class="btn secondary" id="shareCancelBtn">Cancel</button>
     </div>
   </div>
 
@@ -533,7 +550,7 @@ function renderEventCard(id, ev, container) {
   const whenStr = ev.when ? new Date(ev.when).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : 'Date TBD';
   const isResponder = !!(myHouseholdDoc && myHouseholdDoc.responderId === currentUser.uid);
   card.innerHTML = `
-    <h3>${escapeHtml(ev.title)}</h3>
+    <div class="cardHead"><h3>${escapeHtml(ev.title)}</h3><button class="shareBtn evShareBtn">🔗 Share</button></div>
     <div class="when">${whenStr}${ev.where ? ' · ' + escapeHtml(ev.where) : ''}</div>
     <div class="when">Hosted by ${escapeHtml(ev.hostName || '')}</div>
     <div class="rsvpRow rsvpMine" data-eid="${id}">
@@ -553,6 +570,11 @@ function renderEventCard(id, ev, container) {
     <div class="rsvpCount" id="rc-${id}"></div>
   `;
   container.appendChild(card);
+
+  card.querySelector('.evShareBtn').onclick = () => {
+    const text = `${ev.title} — ${whenStr}${ev.where ? ' at ' + ev.where : ''}. Join the family at House of Martin!`;
+    shareContent({ text, url: SITE_URL });
+  };
 
   card.querySelectorAll('.rsvpMine button').forEach(btn => {
     btn.onclick = async () => {
@@ -699,8 +721,12 @@ function openAlbum(albumId, title) {
       const canDelete = p.uploaderId === currentUser.uid || myDoc.role === 'admin';
       const tile = document.createElement('div');
       tile.className = 'photoTile';
-      tile.innerHTML = `<img src="${p.url}" alt="">${canDelete ? '<button class="photoDel">×</button>' : ''}`;
+      tile.innerHTML = `<img src="${p.url}" alt="">${canDelete ? '<button class="photoDel">×</button>' : ''}<button class="photoShare">🔗</button>`;
       tile.querySelector('img').onclick = () => window.open(p.url, '_blank');
+      tile.querySelector('.photoShare').onclick = (e) => {
+        e.stopPropagation();
+        shareContent({ text: `A photo from ${$('adTitle').textContent} on House of Martin!`, url: p.url });
+      };
       if (canDelete) {
         tile.querySelector('.photoDel').onclick = async (e) => {
           e.stopPropagation();
@@ -1014,6 +1040,39 @@ function ageBadgeHtml(u) {
 function canEditProfile(uid) {
   return uid === currentUser.uid || (myDoc && myDoc.role === 'admin');
 }
+
+// ---------- Share (native share sheet, or Facebook/copy fallback) ----------
+const SITE_URL = 'https://house-of-martin.web.app';
+let _pendingShare = null;
+
+async function shareContent({ text, url }) {
+  const shareUrl = url || SITE_URL;
+  if (navigator.share) {
+    try {
+      await navigator.share({ text, url: shareUrl });
+      return;
+    } catch (err) {
+      if (err && err.name === 'AbortError') return; // user cancelled the native sheet
+    }
+  }
+  _pendingShare = { text, url: shareUrl };
+  $('shareFbBtn').href = 'https://www.facebook.com/sharer/sharer.php?u=' + encodeURIComponent(shareUrl) + '&quote=' + encodeURIComponent(text);
+  $('shareModalBg').classList.add('open');
+}
+
+$('shareCancelBtn').onclick = () => $('shareModalBg').classList.remove('open');
+$('shareFbBtn').onclick = () => $('shareModalBg').classList.remove('open');
+$('shareCopyBtn').onclick = async () => {
+  if (!_pendingShare) return;
+  const full = _pendingShare.text + (_pendingShare.url ? '\n' + _pendingShare.url : '');
+  try {
+    await navigator.clipboard.writeText(full);
+    $('shareCopyBtn').textContent = '✅ Copied — paste it anywhere';
+  } catch {
+    $('shareCopyBtn').textContent = 'Could not copy — select and copy manually';
+  }
+  setTimeout(() => { $('shareCopyBtn').textContent = '📋 Copy text to paste anywhere'; $('shareModalBg').classList.remove('open'); }, 1200);
+};
 </script>
 </body>
 </html>
