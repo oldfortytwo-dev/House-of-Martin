@@ -243,6 +243,17 @@
           <div class="hh" id="addrImportStatus" style="margin-top:6px"></div>
         </div>
         <div class="card">
+          <h3 style="margin-top:0">🔗 Link Calendar Birthdays to Contacts</h3>
+          <p class="hh">Matches calendar birthdays to contacts by exact name and lets you confirm/fix the
+            guessed year before applying (2-digit years are ambiguous — the same digits can mean 1917 or
+            2017 depending on the person, so nothing is applied without your review). Once applied, the
+            calendar entry and the contact stay linked — re-running this won't re-suggest or duplicate it.</p>
+          <button class="btn small" id="matchBirthdaysBtn">Find matches</button>
+          <div id="matchResults" style="margin-top:10px"></div>
+          <button class="btn small" id="applyBirthdaysBtn" style="display:none; margin-top:10px">Apply selected</button>
+          <div class="hh" id="matchStatus" style="margin-top:6px"></div>
+        </div>
+        <div class="card">
           <h3 style="margin-top:0">Households</h3>
           <div class="field"><input type="text" id="newHouseholdName" placeholder="e.g. The Alvarez-Martins"></div>
           <button class="btn small" id="createHouseholdBtn">Create household</button>
@@ -1199,7 +1210,7 @@ function daysUntil(month, day) {
 function occasionIcon(o) { return o.type === 'anniversary' ? '💍' : o.type === 'memorial' ? '🕊' : '🎂'; }
 function occasionLabel(o) {
   const label = o.type === 'memorial' ? `In loving memory of ${o.name}` : o.name;
-  return label + (o.deceased ? ' 🕊' : '');
+  return label + (o.deceased ? ' 🕊' : '') + ((o.linkedUserId || o.linkedContactId) ? ' 🔗' : '');
 }
 function occasionRowHtml(o) {
   const admin = myDoc && myDoc.role === 'admin';
@@ -1392,6 +1403,87 @@ $('addrImportBtn').onclick = async () => {
   }
   $('addrImportStatus').textContent = `Processed ${householdCount} household(s) — linked ${matchedUserCount} existing account(s), added/updated ${contactCount} contact(s) without accounts.`;
   $('addrBulk').value = '';
+};
+
+// ---------- Link Calendar Birthdays to Contacts ----------
+let _birthdayMatches = [];
+
+function normalizeName(s) { return (s || '').trim().toLowerCase().replace(/\s+/g, ' '); }
+
+$('matchBirthdaysBtn').onclick = () => {
+  const contactIndex = [];
+  allApprovedUsers.forEach(u => contactIndex.push({ kind: 'user', uid: u.id, name: u.name, birthdate: u.birthdate }));
+  households.forEach(hh => (hh.extraContacts || []).forEach(ec =>
+    contactIndex.push({ kind: 'extra', householdId: hh.id, contactId: ec.id, name: ec.name, birthdate: ec.birthdate })));
+
+  const byName = {};
+  contactIndex.forEach(c => { const k = normalizeName(c.name); (byName[k] = byName[k] || []).push(c); });
+
+  const birthdays = occasions.filter(o => o.type === 'birthday' && o.month && o.day && o.yearRaw);
+  const alreadyLinked = birthdays.filter(o => o.linkedUserId || o.linkedContactId);
+  const unlinked = birthdays.filter(o => !o.linkedUserId && !o.linkedContactId);
+
+  _birthdayMatches = [];
+  let ambiguous = 0;
+  unlinked.forEach(o => {
+    const candidates = byName[normalizeName(o.name)];
+    if (!candidates || candidates.length === 0) return;
+    if (candidates.length > 1) { ambiguous++; return; }
+    const contact = candidates[0];
+    const yy = parseInt(o.yearRaw, 10);
+    const guessedYear = yy <= 30 ? 2000 + yy : 1900 + yy;
+    _birthdayMatches.push({ occasionId: o.id, contact, month: o.month, day: o.day, guessedYear, alreadySet: !!contact.birthdate });
+  });
+
+  $('matchStatus').textContent = `${_birthdayMatches.length} new match(es) found · ${alreadyLinked.length} already linked · ${ambiguous} skipped (multiple contacts share that name) · ${unlinked.length - _birthdayMatches.length - ambiguous} had no matching contact name.`;
+  renderBirthdayMatches();
+};
+
+function renderBirthdayMatches() {
+  const wrap = $('matchResults');
+  if (!_birthdayMatches.length) {
+    wrap.innerHTML = '';
+    $('applyBirthdaysBtn').style.display = 'none';
+    return;
+  }
+  wrap.innerHTML = _birthdayMatches.map((m, i) => `
+    <div class="contactRow">
+      <label class="chk" style="flex:1">
+        <input type="checkbox" class="matchChk" data-i="${i}" ${m.alreadySet ? '' : 'checked'}>
+        ${escapeHtml(m.contact.name)}${m.alreadySet ? ' <span class="hh">(already has a birthdate — will overwrite)</span>' : ''}
+      </label>
+      <input type="number" class="matchYear" data-i="${i}" value="${m.guessedYear}" style="width:70px; padding:6px; border:1px solid var(--border); border-radius:6px">
+    </div>
+  `).join('');
+  $('applyBirthdaysBtn').style.display = 'block';
+}
+
+$('applyBirthdaysBtn').onclick = async () => {
+  let applied = 0;
+  for (let i = 0; i < _birthdayMatches.length; i++) {
+    const chk = document.querySelector(`.matchChk[data-i="${i}"]`);
+    if (!chk || !chk.checked) continue;
+    const m = _birthdayMatches[i];
+    const year = parseInt(document.querySelector(`.matchYear[data-i="${i}"]`).value, 10);
+    if (!year) continue;
+    const birthdate = `${year}-${String(m.month).padStart(2, '0')}-${String(m.day).padStart(2, '0')}`;
+
+    if (m.contact.kind === 'user') {
+      await updateDoc(doc(db, 'users', m.contact.uid), { birthdate });
+      await updateDoc(doc(db, 'occasions', m.occasionId), { linkedUserId: m.contact.uid });
+    } else {
+      const hh = households.find(h => h.id === m.contact.householdId);
+      if (!hh) continue;
+      const updated = (hh.extraContacts || []).map(ec => ec.id === m.contact.contactId ? { ...ec, birthdate } : ec);
+      await updateDoc(doc(db, 'households', hh.id), { extraContacts: updated });
+      await updateDoc(doc(db, 'occasions', m.occasionId), { linkedHouseholdId: m.contact.householdId, linkedContactId: m.contact.contactId });
+    }
+    applied++;
+  }
+  $('matchStatus').textContent = `Linked and applied ${applied} birthdate(s).`;
+  _birthdayMatches = [];
+  $('matchResults').innerHTML = '';
+  $('applyBirthdaysBtn').style.display = 'none';
 };
 
 // ---------- utils ----------
