@@ -126,6 +126,47 @@ suspecting the boolean logic.
 - **DigestSubmission** (`digestSubmissions/{id}`): text, submittedBy, submittedByName,
   includedInDigestAt (null until a real — not test — digest send marks it, via Admin SDK which
   bypasses rules). Any approved member can add one from Events tab → "Add to This Week's Family Email."
+- **Appearance config** (`config/appearance`, single doc): defaultThemeId (admin-set family
+  default), customThemes[] (admin-built, same shape as the built-in presets — see THEME_PRESETS in
+  app/index.html), bannerUrl (header banner photo, Storage path `appearance/{fileName}`). Read: any
+  approved member. Write: admin-only.
+
+## Theme System
+
+10 built-in presets (`THEME_PRESETS` in app/index.html) spanning tame→extreme and
+Facebook-mimicking→not, as asked for: Classic Family, Facebook Blue, Instagram Grid, Kraft &
+Twine, Midnight Family, Retro Photo Album, Pastel Nursery, Nature/Botanical, Holographic/Neon,
+Command Center. Each defines a full CSS custom-property set (colors, `--radius`, `--font-heading`/
+`--font-body`) plus an animation tier (`none`/`subtle`/`glow`/`aurora`), applied instantly via
+`applyTheme()` — no reload, no build step (fonts loaded once via a Google Fonts `<link>` in
+`<head>`, CSS vars swapped on `:root` directly).
+
+**Resolution order**: a member's own choice (`localStorage['hom_theme']`, per device) beats the
+family default (`config/appearance.defaultThemeId`, admin-set, live-synced) beats `'classic'`.
+Applied once immediately at script load — before Firebase auth even resolves — so a returning
+member's sign-in screen matches what they last picked on that device, not a flash of default
+then a swap.
+
+**Custom editor** (admin-only, 🎨 button in the header → "Build a custom theme"): 4 color pickers
+(bg/card/ink/accent) + corner-style/heading-font/animation dropdowns. The 3 remaining tokens
+(`inkSoft`, `accentSoft`, `border`) are auto-derived via CSS `color-mix()` rather than asking for
+3 more pickers — e.g. `border: color-mix(in srgb, ${ink} 14%, ${bg})` — set directly as the CSS
+custom property's *value string* (not resolved in JS), so the browser computes the actual color at
+render time. Saved themes append to `config/appearance.customThemes[]` and immediately become
+selectable/family-default-able by everyone, indistinguishable from a built-in preset to the rest
+of the app.
+
+**Banner photo**: admin-only upload (Storage `appearance/{fileName}`, mirrors the `albums/`
+Storage trust boundary — see that rule's comment in storage.rules for why cross-service admin
+checks aren't attempted there). Shown as a full-width image above the topbar when set. This is
+the first "photo insertion point"; per-theme decorative photo framing (e.g. Kraft & Twine's
+scrapbook/polaroid corners) was intentionally left for a future pass rather than building bespoke
+treatments for all 10 themes in one push.
+
+Verified end-to-end against the emulator: admin's family-default write persisted and a non-admin
+correctly inherited it live, the same non-admin was correctly denied writing `config/appearance`
+directly, and a personal `localStorage` override correctly beat the family default on reload
+(including pre-login).
 
 ## Weekly Digest Email (Cloud Functions)
 
@@ -185,7 +226,9 @@ handoff/extraContacts; member add-remove and moving a contact to a *different*
 household stay admin-only since those touch documents the responder doesn't
 own), DM channels (genuinely private, not just UI-hidden — see the Firestore
 rules gotcha above), weekly digest email (Cloud Functions — see section above),
-multi-admin role management, admin Dashboard (live counts + estimated costs).
+multi-admin role management, admin Dashboard (live counts + estimated costs),
+10-preset theme system with personal/family-default resolution, admin custom
+theme editor, and header banner photo (see "Theme System" section above).
 
 **Deferred:** family tree view, item sign-up lists, native app wrapper,
 deactivating a real account holder's login (vs. the deceased-toggle already
