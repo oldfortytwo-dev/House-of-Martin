@@ -246,6 +246,17 @@
       <div class="field"><label>Title</label><input type="text" id="evTitle"></div>
       <div class="field"><label>Date &amp; time</label><input type="datetime-local" id="evWhen"></div>
       <div class="field"><label>Location</label><input type="text" id="evWhere"></div>
+      <div class="field"><label>Who's invited?</label>
+        <select id="evAudienceType">
+          <option value="everyone">Everyone in the family</option>
+          <option value="custom">Choose specific people/groups</option>
+        </select>
+      </div>
+      <div id="evAudiencePicker" style="display:none">
+        <div class="field"><label>Families</label><div id="evHouseholdPicker" class="chkGroup"></div></div>
+        <div class="field"><label>Groups (branches)</label><div id="evBranchPicker" class="chkGroup"></div></div>
+        <div class="field"><label>Individuals</label><div id="evIndividualPicker" class="chkGroup"></div></div>
+      </div>
       <button class="btn" id="evSaveBtn">Create event</button>
       <button class="btn secondary" id="evCancelBtn">Cancel</button>
     </div>
@@ -519,18 +530,72 @@ async function ensureChannelDoc(id) {
 // ---------- Events ----------
 $('fabBtn').onclick = () => {
   const forTab = $('fabBtn').dataset.for;
-  if (forTab === 'events') $('eventModalBg').classList.add('open');
+  if (forTab === 'events') { populateEventAudiencePickers(); $('eventModalBg').classList.add('open'); }
   if (forTab === 'photos') $('albumModalBg').classList.add('open');
 };
+
+function populateEventAudiencePickers() {
+  $('evHouseholdPicker').innerHTML = households.map(h =>
+    `<label class="chk"><input type="checkbox" value="${h.id}"> 🏠 ${escapeHtml(h.name)}</label>`
+  ).join('') || '<span class="hh">No families set up yet</span>';
+  $('evBranchPicker').innerHTML = branches.map(b =>
+    `<label class="chk"><input type="checkbox" value="${b.id}"> 🌳 ${escapeHtml(b.name)}</label>`
+  ).join('') || '<span class="hh">No groups set up yet</span>';
+  $('evIndividualPicker').innerHTML = allApprovedUsers.map(u =>
+    `<label class="chk"><input type="checkbox" value="${u.id}"> ${escapeHtml(u.name)}${u.role === 'friend' ? ' <span class="hh">(friend)</span>' : ''}</label>`
+  ).join('') || '<span class="hh">No approved members yet</span>';
+}
+
+$('evAudienceType').addEventListener('change', () => {
+  $('evAudiencePicker').style.display = $('evAudienceType').value === 'custom' ? 'block' : 'none';
+});
+
+function resolveEventAudience() {
+  if ($('evAudienceType').value !== 'custom') {
+    return { audience: 'everyone', invitedHouseholdIds: [], invitedBranchIds: [], invitedUserIds: [] };
+  }
+  const householdIds = Array.from(document.querySelectorAll('#evHouseholdPicker input:checked')).map(c => c.value);
+  const branchIds = Array.from(document.querySelectorAll('#evBranchPicker input:checked')).map(c => c.value);
+  const individualIds = Array.from(document.querySelectorAll('#evIndividualPicker input:checked')).map(c => c.value);
+
+  const uidSet = new Set(individualIds);
+  householdIds.forEach(hid => (householdsById[hid]?.memberIds || []).forEach(uid => uidSet.add(uid)));
+  branchIds.forEach(bid => {
+    ((branchesById[bid] && branchesById[bid].householdIds) || []).forEach(hid =>
+      (householdsById[hid]?.memberIds || []).forEach(uid => uidSet.add(uid)));
+  });
+  return { audience: 'custom', invitedHouseholdIds: householdIds, invitedBranchIds: branchIds, invitedUserIds: Array.from(uidSet) };
+}
+
+function describeAudience(ev) {
+  if (!ev.audience || ev.audience === 'everyone') return 'Everyone in the family';
+  const parts = [];
+  (ev.invitedHouseholdIds || []).forEach(id => { const h = householdsById[id]; if (h) parts.push('🏠 ' + h.name); });
+  (ev.invitedBranchIds || []).forEach(id => { const b = branchesById[id]; if (b) parts.push('🌳 ' + b.name); });
+  const covered = new Set();
+  (ev.invitedHouseholdIds || []).forEach(id => (householdsById[id]?.memberIds || []).forEach(u => covered.add(u)));
+  (ev.invitedBranchIds || []).forEach(id => ((branchesById[id] && branchesById[id].householdIds) || []).forEach(hid =>
+    (householdsById[hid]?.memberIds || []).forEach(u => covered.add(u))));
+  (ev.invitedUserIds || []).filter(uid => !covered.has(uid)).forEach(uid => { const u = usersById[uid]; if (u) parts.push(u.name); });
+  return parts.length ? parts.join(', ') : 'Just the host';
+}
+
 $('evCancelBtn').onclick = () => $('eventModalBg').classList.remove('open');
 $('evSaveBtn').onclick = async () => {
   const title = $('evTitle').value.trim();
   if (!title) return;
+  const aud = resolveEventAudience();
   await addDoc(collection(db, 'events'), {
     title, when: $('evWhen').value || null, where: $('evWhere').value.trim(),
-    hostId: currentUser.uid, hostName: myDoc.name, invitedUserIds: [], createdAt: serverTimestamp()
+    hostId: currentUser.uid, hostName: myDoc.name,
+    audience: aud.audience, invitedHouseholdIds: aud.invitedHouseholdIds,
+    invitedBranchIds: aud.invitedBranchIds, invitedUserIds: aud.invitedUserIds,
+    createdAt: serverTimestamp()
   });
   $('evTitle').value = ''; $('evWhen').value=''; $('evWhere').value='';
+  $('evAudienceType').value = 'everyone';
+  $('evAudiencePicker').style.display = 'none';
+  document.querySelectorAll('#evHouseholdPicker input, #evBranchPicker input, #evIndividualPicker input').forEach(c => c.checked = false);
   $('eventModalBg').classList.remove('open');
 };
 
@@ -553,6 +618,7 @@ function renderEventCard(id, ev, container) {
     <div class="cardHead"><h3>${escapeHtml(ev.title)}</h3><button class="shareBtn evShareBtn">🔗 Share</button></div>
     <div class="when">${whenStr}${ev.where ? ' · ' + escapeHtml(ev.where) : ''}</div>
     <div class="when">Hosted by ${escapeHtml(ev.hostName || '')}</div>
+    <div class="when">Invited: ${escapeHtml(describeAudience(ev))}</div>
     <div class="rsvpRow rsvpMine" data-eid="${id}">
       <button data-status="yes">✅ Yes</button>
       <button data-status="maybe">🤔 Maybe</button>
