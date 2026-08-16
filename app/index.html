@@ -92,6 +92,7 @@
   .hhRsvpBlock { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border); }
   .noAccountBadge { font-size: 10px; background: var(--border); color: var(--ink-soft); padding: 2px 6px; border-radius: 8px; margin-left: 6px; font-weight: 600; vertical-align: middle; }
   .ecSection { margin-top: 14px; padding-top: 10px; border-top: 1px dashed var(--border); }
+  code { background: var(--accent-soft); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
   textarea.bulkPaste { width: 100%; padding: 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; font-family: inherit; }
 
   /* Photos */
@@ -184,6 +185,12 @@
 
       <!-- Contacts -->
       <section class="tabpane" id="pane-contacts">
+        <div class="card" id="occCard">
+          <h3 style="margin-top:0">🎂 Upcoming</h3>
+          <div id="occUpcoming"></div>
+          <button class="btn small secondary" id="occShowAllBtn">Show full year</button>
+          <div id="occFullYear" style="display:none; margin-top:10px"></div>
+        </div>
         <div class="card" id="contactList"></div>
       </section>
 
@@ -204,6 +211,19 @@
           <div class="field"><input type="text" id="newInviteCode" placeholder="e.g. MARTIN2026"></div>
           <button class="btn small" id="createInviteBtn">Create invite code</button>
           <div id="inviteList" style="margin-top:12px"></div>
+        </div>
+        <div class="card">
+          <h3 style="margin-top:0">🎂 Family Calendar — bulk import</h3>
+          <p class="hh">Paste lines in any of these formats, one per line:</p>
+          <p class="hh">
+            <code>09/18/86 Molly Ryan Martin</code> — birthday<br>
+            <code>09/10/94 Jack &amp; Jeanette Anniv</code> — anniversary<br>
+            <code>10/17/14 Death Isabel Rohrbaugh</code> — death anniversary<br>
+            <code>10/28/38 – 01/14/26 Pat Gibble</code> — birthday, passing noted
+          </p>
+          <textarea id="occBulk" class="bulkPaste" rows="6" placeholder="Paste birthday/anniversary lines here…"></textarea>
+          <button class="btn small" id="occImportBtn">Import</button>
+          <div class="hh" id="occImportStatus" style="margin-top:6px"></div>
         </div>
         <div class="card">
           <h3 style="margin-top:0">Households</h3>
@@ -353,8 +373,9 @@ let activeChannelId = 'family';
 let households = [], householdsById = {};
 let branches = [], branchesById = {};
 let usersById = {}, allApprovedUsers = [];
+let occasions = [];
 let unsubMsgs = null, unsubEvents = null, unsubAlbums = null, unsubContacts = null, unsubPending = null,
-    unsubInvites = null, unsubHouseholds = null, unsubBranches = null, unsubPhotos = null;
+    unsubInvites = null, unsubHouseholds = null, unsubBranches = null, unsubPhotos = null, unsubOccasions = null;
 let _openAlbumId = null;
 
 // ---------- Auth screen wiring ----------
@@ -429,6 +450,7 @@ onAuthStateChanged(auth, async (user) => {
   initEvents();
   initAlbums();
   initContacts();
+  initOccasions();
   if (myDoc.role === 'admin') { initAdmin(); }
 });
 
@@ -437,8 +459,8 @@ function show(id) {
 }
 
 function cleanupListeners() {
-  [unsubMsgs, unsubEvents, unsubAlbums, unsubContacts, unsubPending, unsubInvites, unsubHouseholds, unsubBranches, unsubPhotos].forEach(u => u && u());
-  unsubMsgs = unsubEvents = unsubAlbums = unsubContacts = unsubPending = unsubInvites = unsubHouseholds = unsubBranches = unsubPhotos = null;
+  [unsubMsgs, unsubEvents, unsubAlbums, unsubContacts, unsubPending, unsubInvites, unsubHouseholds, unsubBranches, unsubPhotos, unsubOccasions].forEach(u => u && u());
+  unsubMsgs = unsubEvents = unsubAlbums = unsubContacts = unsubPending = unsubInvites = unsubHouseholds = unsubBranches = unsubPhotos = unsubOccasions = null;
 }
 
 // ---------- Tab nav ----------
@@ -1083,6 +1105,100 @@ $('epSaveBtn').onclick = async () => {
     birthdate: $('epBirthdate').value || null
   });
   $('editProfileModalBg').classList.remove('open');
+};
+
+// ---------- Family Calendar (birthdays / anniversaries / death anniversaries) ----------
+function initOccasions() {
+  unsubOccasions = onSnapshot(collection(db, 'occasions'), (snap) => {
+    occasions = [];
+    snap.forEach(d => occasions.push({ id: d.id, ...d.data() }));
+    renderOccasions();
+  });
+}
+
+function daysUntil(month, day) {
+  const now = new Date(); now.setHours(0, 0, 0, 0);
+  let next = new Date(now.getFullYear(), month - 1, day);
+  if (next < now) next = new Date(now.getFullYear() + 1, month - 1, day);
+  return Math.round((next - now) / 86400000);
+}
+
+function occasionIcon(o) { return o.type === 'anniversary' ? '💍' : o.type === 'memorial' ? '🕊' : '🎂'; }
+function occasionLabel(o) {
+  const label = o.type === 'memorial' ? `In loving memory of ${o.name}` : o.name;
+  return label + (o.deceased ? ' 🕊' : '');
+}
+function occasionRowHtml(o) {
+  const del = (myDoc && myDoc.role === 'admin') ? `<button class="editBtn occDel" data-id="${o.id}">✕</button>` : '';
+  return `<div class="contactRow">
+    <div class="nm">${occasionIcon(o)} ${escapeHtml(occasionLabel(o))}</div>
+    <div class="info">${String(o.month).padStart(2, '0')}/${String(o.day).padStart(2, '0')}${o._days !== undefined ? ` <span class="hh">${o._days === 0 ? '· Today!' : o._days === 1 ? '· Tomorrow' : `· in ${o._days}d`}</span>` : ''}${del}</div>
+  </div>`;
+}
+
+function renderOccasions() {
+  const withDays = occasions.filter(o => o.month && o.day).map(o => ({ ...o, _days: daysUntil(o.month, o.day) }));
+  withDays.sort((a, b) => a._days - b._days);
+
+  const upcoming = withDays.filter(o => o._days <= 45).slice(0, 12);
+  $('occUpcoming').innerHTML = upcoming.length
+    ? upcoming.map(occasionRowHtml).join('')
+    : '<div class="hh">Nothing in the next 45 days.</div>';
+
+  const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const byMonth = {};
+  withDays.forEach(o => { (byMonth[o.month] = byMonth[o.month] || []).push(o); });
+  $('occFullYear').innerHTML = Object.keys(byMonth).sort((a, b) => a - b).map(m => {
+    const items = [...byMonth[m]].sort((a, b) => a.day - b.day);
+    return `<div class="hhHeader"><span>${monthNames[m - 1]}</span></div>` +
+      items.map(o => occasionRowHtml({ ...o, _days: undefined })).join('');
+  }).join('');
+
+  document.querySelectorAll('.occDel').forEach(btn => {
+    btn.onclick = async () => { await deleteDoc(doc(db, 'occasions', btn.dataset.id)); };
+  });
+}
+
+$('occShowAllBtn').onclick = () => {
+  const showing = $('occFullYear').style.display !== 'none';
+  $('occFullYear').style.display = showing ? 'none' : 'block';
+  $('occShowAllBtn').textContent = showing ? 'Show full year' : 'Hide full year';
+};
+
+function parseOccasionLine(line) {
+  line = line.trim();
+  if (!line) return null;
+  const m = line.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})\s*(?:[-–]\s*(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})\s*)?(.+)$/);
+  if (!m) return { type: 'unparsed', raw: line };
+  const [, m1, d1, y1, m2, d2, y2, rest] = m;
+  const restTrim = rest.trim();
+
+  if (/^death\b/i.test(restTrim)) {
+    return { type: 'memorial', name: restTrim.replace(/^death\s*/i, '').trim(), month: +m1, day: +d1, yearRaw: y1, raw: line };
+  }
+  if (/anniv/i.test(restTrim)) {
+    return { type: 'anniversary', name: restTrim.replace(/\s*anniv\.?\s*$/i, '').trim(), month: +m1, day: +d1, yearRaw: y1, raw: line };
+  }
+  const entry = { type: 'birthday', name: restTrim, month: +m1, day: +d1, yearRaw: y1, raw: line };
+  if (m2 && d2 && y2) {
+    entry.deceased = true;
+    entry.deathMonth = +m2; entry.deathDay = +d2; entry.deathYearRaw = y2;
+  }
+  return entry;
+}
+
+$('occImportBtn').onclick = async () => {
+  const lines = $('occBulk').value.split('\n').map(l => l.trim()).filter(Boolean);
+  const parsed = lines.map(parseOccasionLine).filter(Boolean);
+  const bad = parsed.filter(p => p.type === 'unparsed');
+  if (bad.length && !confirm(`${bad.length} line(s) couldn't be parsed and will be skipped:\n\n${bad.map(b => b.raw).join('\n')}\n\nImport the rest?`)) return;
+  const good = parsed.filter(p => p.type !== 'unparsed');
+  if (!good.length) { $('occImportStatus').textContent = 'Nothing to import.'; return; }
+  const batch = writeBatch(db);
+  good.forEach(entry => batch.set(doc(collection(db, 'occasions')), { ...entry, createdAt: serverTimestamp() }));
+  await batch.commit();
+  $('occImportStatus').textContent = `Imported ${good.length} occasion(s)${bad.length ? `, skipped ${bad.length}` : ''}.`;
+  $('occBulk').value = '';
 };
 
 // ---------- utils ----------

@@ -46,6 +46,11 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    match /occasions/{occasionId} {
+      allow read: if isApprovedMember();
+      allow write: if isAdmin();
+    }
+
     match /inviteCodes/{codeId} {
       // get (fetch by known code) must be public — signup validates the code
       // *before* the account exists, so request.auth is still null at that point.
