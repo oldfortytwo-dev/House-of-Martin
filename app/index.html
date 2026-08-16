@@ -252,6 +252,12 @@
           <div id="matchResults" style="margin-top:10px"></div>
           <button class="btn small" id="applyBirthdaysBtn" style="display:none; margin-top:10px">Apply selected</button>
           <div class="hh" id="matchStatus" style="margin-top:6px"></div>
+          <div id="unmatchedSection" style="display:none; margin-top:16px; padding-top:12px; border-top:1px dashed var(--border)">
+            <div class="nm" style="font-size:13px">No matching contact — add to a household</div>
+            <div class="hh">Common when a birthday belongs to a kid who was never in the address book, or the
+              name is spelled slightly differently between the two lists.</div>
+            <div id="unmatchedResults" style="margin-top:8px"></div>
+          </div>
         </div>
         <div class="card">
           <h3 style="margin-top:0">Households</h3>
@@ -1407,8 +1413,13 @@ $('addrImportBtn').onclick = async () => {
 
 // ---------- Link Calendar Birthdays to Contacts ----------
 let _birthdayMatches = [];
+let _unmatchedBirthdays = [];
 
 function normalizeName(s) { return (s || '').trim().toLowerCase().replace(/\s+/g, ' '); }
+function guessYearFrom2Digit(yearRaw) {
+  const yy = parseInt(yearRaw, 10);
+  return yy <= 30 ? 2000 + yy : 1900 + yy;
+}
 
 $('matchBirthdaysBtn').onclick = () => {
   const contactIndex = [];
@@ -1424,19 +1435,22 @@ $('matchBirthdaysBtn').onclick = () => {
   const unlinked = birthdays.filter(o => !o.linkedUserId && !o.linkedContactId);
 
   _birthdayMatches = [];
+  _unmatchedBirthdays = [];
   let ambiguous = 0;
   unlinked.forEach(o => {
     const candidates = byName[normalizeName(o.name)];
-    if (!candidates || candidates.length === 0) return;
+    if (!candidates || candidates.length === 0) {
+      _unmatchedBirthdays.push({ occasionId: o.id, name: o.name, month: o.month, day: o.day, guessedYear: guessYearFrom2Digit(o.yearRaw) });
+      return;
+    }
     if (candidates.length > 1) { ambiguous++; return; }
     const contact = candidates[0];
-    const yy = parseInt(o.yearRaw, 10);
-    const guessedYear = yy <= 30 ? 2000 + yy : 1900 + yy;
-    _birthdayMatches.push({ occasionId: o.id, contact, month: o.month, day: o.day, guessedYear, alreadySet: !!contact.birthdate });
+    _birthdayMatches.push({ occasionId: o.id, contact, month: o.month, day: o.day, guessedYear: guessYearFrom2Digit(o.yearRaw), alreadySet: !!contact.birthdate });
   });
 
-  $('matchStatus').textContent = `${_birthdayMatches.length} new match(es) found · ${alreadyLinked.length} already linked · ${ambiguous} skipped (multiple contacts share that name) · ${unlinked.length - _birthdayMatches.length - ambiguous} had no matching contact name.`;
+  $('matchStatus').textContent = `${_birthdayMatches.length} new match(es) found · ${alreadyLinked.length} already linked · ${ambiguous} skipped (multiple contacts share that name) · ${_unmatchedBirthdays.length} had no matching contact name.`;
   renderBirthdayMatches();
+  renderUnmatchedBirthdays();
 };
 
 function renderBirthdayMatches() {
@@ -1456,6 +1470,44 @@ function renderBirthdayMatches() {
     </div>
   `).join('');
   $('applyBirthdaysBtn').style.display = 'block';
+}
+
+function renderUnmatchedBirthdays() {
+  const section = $('unmatchedSection');
+  const wrap = $('unmatchedResults');
+  if (!_unmatchedBirthdays.length) { section.style.display = 'none'; wrap.innerHTML = ''; return; }
+  section.style.display = 'block';
+  const hhOptions = households.map(h => `<option value="${h.id}">${escapeHtml(h.name)}</option>`).join('');
+  wrap.innerHTML = _unmatchedBirthdays.map((u, i) => `
+    <div class="contactRow" data-i="${i}">
+      <div class="nm" style="flex:1">${escapeHtml(u.name)} <span class="hh">${String(u.month).padStart(2, '0')}/${String(u.day).padStart(2, '0')}</span></div>
+      <input type="number" class="unmYear" data-i="${i}" value="${u.guessedYear}" style="width:64px; padding:6px; border:1px solid var(--border); border-radius:6px; margin-right:6px">
+      <select class="unmHousehold" data-i="${i}" style="padding:6px; border:1px solid var(--border); border-radius:6px; margin-right:6px">
+        <option value="">— pick household —</option>
+        ${hhOptions}
+      </select>
+      <button class="btn small secondary unmAdd" data-i="${i}">Add</button>
+    </div>
+  `).join('');
+  wrap.querySelectorAll('.unmAdd').forEach(btn => {
+    btn.onclick = async () => {
+      const i = +btn.dataset.i;
+      const u = _unmatchedBirthdays[i];
+      const hhId = document.querySelector(`.unmHousehold[data-i="${i}"]`).value;
+      if (!hhId) { alert('Pick a household first.'); return; }
+      const year = parseInt(document.querySelector(`.unmYear[data-i="${i}"]`).value, 10);
+      if (!year) return;
+      const hh = households.find(h => h.id === hhId);
+      if (!hh) return;
+      const birthdate = `${year}-${String(u.month).padStart(2, '0')}-${String(u.day).padStart(2, '0')}`;
+      const contactId = crypto.randomUUID();
+      const updated = [...(hh.extraContacts || []), { id: contactId, name: u.name, birthdate, phone: '', email: '' }];
+      await updateDoc(doc(db, 'households', hh.id), { extraContacts: updated });
+      await updateDoc(doc(db, 'occasions', u.occasionId), { linkedHouseholdId: hh.id, linkedContactId: contactId });
+      _unmatchedBirthdays.splice(i, 1);
+      renderUnmatchedBirthdays();
+    };
+  });
 }
 
 $('applyBirthdaysBtn').onclick = async () => {
