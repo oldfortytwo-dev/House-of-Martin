@@ -66,12 +66,22 @@ laziness.
 
 - **User** (`users/{uid}`): name, email, phone, birthdate (age shown publicly only if ≤21),
   role (member/friend/admin), status (pending/approved), householdId, inviteCodeUsed
-- **Household** (`households/{id}`): name, memberIds[], responderId (RSVPs/edits for the household), phone, address
+- **Household** (`households/{id}`): name, memberIds[], responderId (RSVPs/edits for the household),
+  phone, address, anniversary, extraContacts[] ({id, name, birthdate, phone} — family members with
+  no account of their own, e.g. young kids or relatives who'll never sign up)
 - **Branch** (`branches/{id}`): name, householdIds[]
 - **InviteCode** (`inviteCodes/{code}`): role (what new signups using this code become)
 - **Channel** (`channels/{id}`): name, type (family/household/branch), householdId or branchId, invitedUserIds[] (friends)
   - `messages` subcollection: text, senderId, senderName, createdAt
-- **Event** (`events/{id}`): title, when, where, hostId, hostName, invitedUserIds[]
+- **Event** (`events/{id}`): title, when, where, hostId, hostName, audience ('everyone'|'custom'),
+  invitedHouseholdIds[], invitedBranchIds[], invitedUserIds[] (flat resolved uid list — also what
+  `isFriendInvitedTo()` in firestore.rules checks, so a friend picked as an individual invitee
+  actually gets read access). Read access is **not** restricted by audience — every approved member
+  can browse and RSVP to every event regardless of who was formally invited; `audience` is invite
+  *addressing* (who the host meant to reach, shown as "Invited: ..." on the card), not a visibility
+  boundary. That was a deliberate simplification: Firestore's list-query rules can't safely
+  per-document-filter a broad `collection(db,'events')` query by a field like this without reworking
+  every event query to be provably scoped, which was out of proportion to the ask.
   - `rsvps` subcollection, keyed by member uid: status, submittedBy, name, householdId, viaHousehold
 - **Album** (`albums/{id}`): title, createdBy, visibility, invitedUserIds[] (friends)
   - `photos` subcollection: url, storagePath, uploaderId, uploaderName, createdAt
