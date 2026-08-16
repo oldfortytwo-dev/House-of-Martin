@@ -82,7 +82,8 @@
   .hhHeader .hh { font-weight: 400; }
   .respBadge { font-size: 10px; background: var(--accent-soft); color: var(--accent); padding: 2px 6px; border-radius: 8px; margin-left: 6px; font-weight: 600; vertical-align: middle; }
   .ageBadge { font-size: 10px; background: #fde3b0; color: #7a5210; padding: 2px 6px; border-radius: 8px; margin-left: 6px; font-weight: 600; vertical-align: middle; }
-  .editBtn { border: none; background: none; color: var(--ink-soft); font-size: 13px; cursor: pointer; padding: 0 2px; margin-left: 4px; }
+  .editBtn { border: none; background: none; color: var(--ink-soft); font-size: 14px; cursor: pointer; padding: 4px; margin-left: 10px; }
+  .contactRow .info { display: inline-flex; align-items: center; }
 
   /* Households / Branches admin */
   .hhEditor { border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-bottom: 10px; }
@@ -185,13 +186,17 @@
 
       <!-- Contacts -->
       <section class="tabpane" id="pane-contacts">
+        <div class="card" id="contactList"></div>
+      </section>
+
+      <!-- Calendar -->
+      <section class="tabpane" id="pane-calendar">
         <div class="card" id="occCard">
           <h3 style="margin-top:0">🎂 Upcoming</h3>
           <div id="occUpcoming"></div>
           <button class="btn small secondary" id="occShowAllBtn">Show full year</button>
           <div id="occFullYear" style="display:none; margin-top:10px"></div>
         </div>
-        <div class="card" id="contactList"></div>
       </section>
 
       <!-- Photos -->
@@ -226,6 +231,18 @@
           <div class="hh" id="occImportStatus" style="margin-top:6px"></div>
         </div>
         <div class="card">
+          <h3 style="margin-top:0">📇 Address Book — bulk import</h3>
+          <p class="hh">Paste family blocks separated by a blank line. First line = household name,
+            second line = address, remaining lines = one person per line as
+            <code>Name | phone | email</code> (phone/email optional):</p>
+          <p class="hh"><code>Jack &amp; Jeanette Martin<br>1132 Bridgewater Dr, New Oxford PA 17350<br>Jack Martin | 717-577-5853 | j-jmartin@comcast.net<br>Jeanette Martin | 717-225-1827 | jeanettewm1954@gmail.com</code></p>
+          <p class="hh">If a person's email matches an existing approved account, that account gets linked
+            to the household instead of creating a duplicate no-account contact.</p>
+          <textarea id="addrBulk" class="bulkPaste" rows="8" placeholder="Paste address book blocks here…"></textarea>
+          <button class="btn small" id="addrImportBtn">Import</button>
+          <div class="hh" id="addrImportStatus" style="margin-top:6px"></div>
+        </div>
+        <div class="card">
           <h3 style="margin-top:0">Households</h3>
           <div class="field"><input type="text" id="newHouseholdName" placeholder="e.g. The Alvarez-Martins"></div>
           <button class="btn small" id="createHouseholdBtn">Create household</button>
@@ -254,6 +271,7 @@
       <button data-tab="messages" class="active"><span class="ic">💬</span>Messages</button>
       <button data-tab="events"><span class="ic">📅</span>Events</button>
       <button data-tab="contacts"><span class="ic">📇</span>Contacts</button>
+      <button data-tab="calendar"><span class="ic">🎂</span>Calendar</button>
       <button data-tab="photos"><span class="ic">📷</span>Photos</button>
       <button data-tab="admin" id="adminTabBtn" style="display:none"><span class="ic">⚙️</span>Admin</button>
     </nav>
@@ -300,6 +318,36 @@
       <div class="field"><label>Birthdate (shows age publicly only if 21 or under)</label><input type="date" id="epBirthdate"></div>
       <button class="btn" id="epSaveBtn">Save</button>
       <button class="btn secondary" id="epCancelBtn">Cancel</button>
+    </div>
+  </div>
+
+  <!-- Edit occasion modal -->
+  <div class="modalBg" id="editOccModalBg">
+    <div class="modalSheet">
+      <h3>Edit calendar entry</h3>
+      <div class="field"><label>Type</label>
+        <select id="eoType">
+          <option value="birthday">Birthday</option>
+          <option value="anniversary">Anniversary</option>
+          <option value="memorial">Death anniversary</option>
+        </select>
+      </div>
+      <div class="field"><label>Name</label><input type="text" id="eoName"></div>
+      <div style="display:flex; gap:8px">
+        <div class="field" style="flex:1"><label>Month (1-12)</label><input type="number" id="eoMonth" min="1" max="12"></div>
+        <div class="field" style="flex:1"><label>Day</label><input type="number" id="eoDay" min="1" max="31"></div>
+        <div class="field" style="flex:1"><label>Year</label><input type="text" id="eoYear" placeholder="e.g. 1986"></div>
+      </div>
+      <label class="chk" id="eoDeceasedWrap" style="margin-bottom:10px"><input type="checkbox" id="eoDeceased"> Also mark as passed away</label>
+      <div id="eoDeathFields" style="display:none">
+        <div style="display:flex; gap:8px">
+          <div class="field" style="flex:1"><label>Passing month</label><input type="number" id="eoDeathMonth" min="1" max="12"></div>
+          <div class="field" style="flex:1"><label>Day</label><input type="number" id="eoDeathDay" min="1" max="31"></div>
+          <div class="field" style="flex:1"><label>Year</label><input type="text" id="eoDeathYear"></div>
+        </div>
+      </div>
+      <button class="btn" id="eoSaveBtn">Save</button>
+      <button class="btn secondary" id="eoCancelBtn">Cancel</button>
     </div>
   </div>
 
@@ -749,7 +797,7 @@ function renderContacts() {
     const extraRows = ((hh && hh.extraContacts) || []).map(ec => `
       <div class="contactRow">
         <div><div class="nm">${escapeHtml(ec.name)}${ageBadgeHtml(ec)}<span class="noAccountBadge">no account</span></div></div>
-        <div class="info">${ec.phone ? escapeHtml(ec.phone) : ''}</div>
+        <div class="info">${ec.email ? escapeHtml(ec.email) : ''}${ec.phone ? '<br>' + escapeHtml(ec.phone) : ''}</div>
       </div>`).join('');
     return header + memberRows + extraRows;
   }).join('');
@@ -908,7 +956,7 @@ function renderHouseholdsAdmin() {
     }).join('') || '<option value="">— add &amp; save members first —</option>';
     const extraRows = (hh.extraContacts || []).map(ec => `
       <div class="contactRow">
-        <div><div class="nm">${escapeHtml(ec.name)}${ageBadgeHtml(ec)}${ec.phone ? ` <span class="hh">${escapeHtml(ec.phone)}</span>` : ''}</div></div>
+        <div><div class="nm">${escapeHtml(ec.name)}${ageBadgeHtml(ec)}${ec.phone || ec.email ? ` <span class="hh">${escapeHtml([ec.phone, ec.email].filter(Boolean).join(' · '))}</span>` : ''}</div></div>
         <button class="editBtn ecDel" data-id="${ec.id}">✕</button>
       </div>`).join('') || '<div class="hh">None yet</div>';
     box.innerHTML = `
@@ -932,16 +980,17 @@ function renderHouseholdsAdmin() {
       <div class="ecSection">
         <div class="nm" style="font-size:13px">Family members without their own account</div>
         <div style="margin-top:6px">${extraRows}</div>
-        <div class="field" style="margin-top:10px"><label>Add one (name, birthdate, phone)</label>
+        <div class="field" style="margin-top:10px"><label>Add one (name, birthdate, phone, email)</label>
           <div style="display:flex; gap:6px; flex-wrap:wrap">
             <input type="text" class="ecName" placeholder="Name" style="flex:2; min-width:100px">
             <input type="date" class="ecBirthdate" style="flex:1; min-width:120px">
             <input type="tel" class="ecPhone" placeholder="Phone (optional)" style="flex:1; min-width:100px">
+            <input type="email" class="ecEmail" placeholder="Email (optional)" style="flex:1; min-width:120px">
           </div>
         </div>
         <button class="btn small secondary ecAddOne">Add</button>
-        <div class="field" style="margin-top:10px"><label>Or paste a list — one per line: Name, YYYY-MM-DD, phone</label>
-          <textarea class="ecBulk bulkPaste" rows="3" placeholder="Grandma Rose, 1948-03-14&#10;Jimmy Martin, 2011-07-02, 555-123-4567"></textarea>
+        <div class="field" style="margin-top:10px"><label>Or paste a list — one per line: Name, YYYY-MM-DD, phone, email</label>
+          <textarea class="ecBulk bulkPaste" rows="3" placeholder="Grandma Rose, 1948-03-14&#10;Jimmy Martin, 2011-07-02, 555-123-4567, jimmy@example.com"></textarea>
         </div>
         <button class="btn small secondary ecAddBulk">Add from list</button>
       </div>
@@ -982,16 +1031,17 @@ function renderHouseholdsAdmin() {
       const entry = {
         id: crypto.randomUUID(), name,
         birthdate: box.querySelector('.ecBirthdate').value || null,
-        phone: box.querySelector('.ecPhone').value.trim()
+        phone: box.querySelector('.ecPhone').value.trim(),
+        email: box.querySelector('.ecEmail').value.trim()
       };
       await updateDoc(doc(db, 'households', hh.id), { extraContacts: [...(hh.extraContacts || []), entry] });
-      box.querySelector('.ecName').value = ''; box.querySelector('.ecBirthdate').value = ''; box.querySelector('.ecPhone').value = '';
+      box.querySelector('.ecName').value = ''; box.querySelector('.ecBirthdate').value = ''; box.querySelector('.ecPhone').value = ''; box.querySelector('.ecEmail').value = '';
     };
     box.querySelector('.ecAddBulk').onclick = async () => {
       const lines = box.querySelector('.ecBulk').value.split('\n').map(l => l.trim()).filter(Boolean);
       const newEntries = lines.map(line => {
-        const [name, birthdate, phone] = line.split(',').map(p => (p || '').trim());
-        return name ? { id: crypto.randomUUID(), name, birthdate: birthdate || null, phone: phone || '' } : null;
+        const [name, birthdate, phone, email] = line.split(',').map(p => (p || '').trim());
+        return name ? { id: crypto.randomUUID(), name, birthdate: birthdate || null, phone: phone || '', email: email || '' } : null;
       }).filter(Boolean);
       if (!newEntries.length) return;
       await updateDoc(doc(db, 'households', hh.id), { extraContacts: [...(hh.extraContacts || []), ...newEntries] });
@@ -1129,10 +1179,12 @@ function occasionLabel(o) {
   return label + (o.deceased ? ' 🕊' : '');
 }
 function occasionRowHtml(o) {
-  const del = (myDoc && myDoc.role === 'admin') ? `<button class="editBtn occDel" data-id="${o.id}">✕</button>` : '';
+  const admin = myDoc && myDoc.role === 'admin';
+  const edit = admin ? `<button class="editBtn occEdit" data-id="${o.id}">✎</button>` : '';
+  const del = admin ? `<button class="editBtn occDel" data-id="${o.id}">✕</button>` : '';
   return `<div class="contactRow">
     <div class="nm">${occasionIcon(o)} ${escapeHtml(occasionLabel(o))}</div>
-    <div class="info">${String(o.month).padStart(2, '0')}/${String(o.day).padStart(2, '0')}${o._days !== undefined ? ` <span class="hh">${o._days === 0 ? '· Today!' : o._days === 1 ? '· Tomorrow' : `· in ${o._days}d`}</span>` : ''}${del}</div>
+    <div class="info">${String(o.month).padStart(2, '0')}/${String(o.day).padStart(2, '0')}${o._days !== undefined ? ` <span class="hh">${o._days === 0 ? '· Today!' : o._days === 1 ? '· Tomorrow' : `· in ${o._days}d`}</span>` : ''}${edit}${del}</div>
   </div>`;
 }
 
@@ -1157,7 +1209,55 @@ function renderOccasions() {
   document.querySelectorAll('.occDel').forEach(btn => {
     btn.onclick = async () => { await deleteDoc(doc(db, 'occasions', btn.dataset.id)); };
   });
+  document.querySelectorAll('.occEdit').forEach(btn => {
+    btn.onclick = () => openEditOccasion(btn.dataset.id);
+  });
 }
+
+let _editingOccasionId = null;
+function openEditOccasion(id) {
+  const o = occasions.find(x => x.id === id);
+  if (!o) return;
+  _editingOccasionId = id;
+  $('eoType').value = o.type || 'birthday';
+  $('eoName').value = o.name || '';
+  $('eoMonth').value = o.month || '';
+  $('eoDay').value = o.day || '';
+  $('eoYear').value = o.yearRaw || '';
+  $('eoDeceased').checked = !!o.deceased;
+  $('eoDeathMonth').value = o.deathMonth || '';
+  $('eoDeathDay').value = o.deathDay || '';
+  $('eoDeathYear').value = o.deathYearRaw || '';
+  $('eoDeceasedWrap').style.display = $('eoType').value === 'birthday' ? 'block' : 'none';
+  $('eoDeathFields').style.display = $('eoDeceased').checked ? 'block' : 'none';
+  $('editOccModalBg').classList.add('open');
+}
+$('eoType').addEventListener('change', () => {
+  $('eoDeceasedWrap').style.display = $('eoType').value === 'birthday' ? 'block' : 'none';
+});
+$('eoDeceased').addEventListener('change', () => {
+  $('eoDeathFields').style.display = $('eoDeceased').checked ? 'block' : 'none';
+});
+$('eoCancelBtn').onclick = () => $('editOccModalBg').classList.remove('open');
+$('eoSaveBtn').onclick = async () => {
+  if (!_editingOccasionId) return;
+  const payload = {
+    type: $('eoType').value,
+    name: $('eoName').value.trim(),
+    month: +$('eoMonth').value,
+    day: +$('eoDay').value,
+    yearRaw: $('eoYear').value.trim(),
+    deceased: $('eoType').value === 'birthday' && $('eoDeceased').checked,
+    deathMonth: null, deathDay: null, deathYearRaw: null
+  };
+  if (payload.deceased) {
+    payload.deathMonth = +$('eoDeathMonth').value || null;
+    payload.deathDay = +$('eoDeathDay').value || null;
+    payload.deathYearRaw = $('eoDeathYear').value.trim() || null;
+  }
+  await updateDoc(doc(db, 'occasions', _editingOccasionId), payload);
+  $('editOccModalBg').classList.remove('open');
+};
 
 $('occShowAllBtn').onclick = () => {
   const showing = $('occFullYear').style.display !== 'none';
@@ -1199,6 +1299,76 @@ $('occImportBtn').onclick = async () => {
   await batch.commit();
   $('occImportStatus').textContent = `Imported ${good.length} occasion(s)${bad.length ? `, skipped ${bad.length}` : ''}.`;
   $('occBulk').value = '';
+};
+
+// ---------- Address Book bulk import ----------
+function parseAddressBookText(text) {
+  const blocks = text.split(/\n\s*\n/).map(b => b.trim()).filter(Boolean);
+  return blocks.map(block => {
+    const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
+    if (lines.length < 2) return { error: true, raw: block };
+    const [name, address, ...personLines] = lines;
+    const people = personLines.map(pl => {
+      const [pname, pphone, pemail] = pl.split('|').map(s => (s || '').trim());
+      return pname ? { name: pname, phone: pphone || '', email: pemail || '' } : null;
+    }).filter(Boolean);
+    return { name, address, people, raw: block };
+  });
+}
+
+$('addrImportBtn').onclick = async () => {
+  const blocks = parseAddressBookText($('addrBulk').value);
+  const errors = blocks.filter(b => b.error);
+  if (errors.length && !confirm(`${errors.length} block(s) couldn't be parsed (need at least a name line and an address line) and will be skipped. Continue?`)) return;
+  const good = blocks.filter(b => !b.error);
+  if (!good.length) { $('addrImportStatus').textContent = 'Nothing to import.'; return; }
+
+  let householdCount = 0, matchedUserCount = 0, contactCount = 0;
+  for (const block of good) {
+    const existing = households.find(h => (h.name || '').toLowerCase() === block.name.toLowerCase());
+    const extraContacts = existing ? [...(existing.extraContacts || [])] : [];
+    const memberIds = existing ? [...(existing.memberIds || [])] : [];
+    let responderId = existing ? existing.responderId : null;
+
+    for (const person of block.people) {
+      const matchedUser = person.email
+        ? allApprovedUsers.find(u => (u.email || '').toLowerCase() === person.email.toLowerCase())
+        : null;
+      if (matchedUser) {
+        matchedUserCount++;
+        if (!memberIds.includes(matchedUser.id)) memberIds.push(matchedUser.id);
+        if (!responderId) responderId = matchedUser.id;
+        if (!matchedUser.phone && person.phone) {
+          await updateDoc(doc(db, 'users', matchedUser.id), { phone: person.phone });
+        }
+      } else {
+        const idx = extraContacts.findIndex(ec => ec.name.toLowerCase() === person.name.toLowerCase());
+        if (idx >= 0) {
+          extraContacts[idx] = {
+            ...extraContacts[idx],
+            phone: person.phone || extraContacts[idx].phone,
+            email: person.email || extraContacts[idx].email
+          };
+        } else {
+          extraContacts.push({ id: crypto.randomUUID(), name: person.name, birthdate: null, phone: person.phone, email: person.email });
+        }
+        contactCount++;
+      }
+    }
+
+    const payload = { memberIds, responderId, extraContacts };
+    if (block.address) payload.address = block.address;
+    if (existing) {
+      await updateDoc(doc(db, 'households', existing.id), payload);
+    } else {
+      await setDoc(doc(collection(db, 'households')), {
+        name: block.name, phone: '', anniversary: null, createdBy: currentUser.uid, createdAt: serverTimestamp(), ...payload
+      });
+    }
+    householdCount++;
+  }
+  $('addrImportStatus').textContent = `Processed ${householdCount} household(s) — linked ${matchedUserCount} existing account(s), added/updated ${contactCount} contact(s) without accounts.`;
+  $('addrBulk').value = '';
 };
 
 // ---------- utils ----------
