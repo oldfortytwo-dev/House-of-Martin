@@ -74,6 +74,14 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    match /config/{docId} {
+      // App-wide config docs (currently just 'appearance' — theme default + banner photo +
+      // custom themes). Any approved member reads it (needed to render the family's theme);
+      // only admins write it.
+      allow read: if isApprovedMember();
+      allow write: if isAdmin();
+    }
+
     match /inviteCodes/{codeId} {
       // get (fetch by known code) must be public — signup validates the code
       // *before* the account exists, so request.auth is still null at that point.

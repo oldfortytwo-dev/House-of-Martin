@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>House of Martin</title>
 <meta name="theme-color" content="#3b2f2f">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Caveat:wght@600&family=Fredoka:wght@500;600&family=JetBrains+Mono:wght@400;600&family=Playfair+Display:wght@600;700&family=Special+Elite&display=swap" rel="stylesheet">
 <style>
   :root {
     --bg: #f6f1ea;
@@ -14,11 +17,49 @@
     --accent: #a9432f;
     --accent-soft: #f0ded7;
     --border: #e7ddd2;
+    --radius: 12px;
+    --font-heading: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     --nav-h: 60px;
   }
   * { box-sizing: border-box; }
-  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--ink); }
+  body { margin: 0; font-family: var(--font-body); background: var(--bg); color: var(--ink); transition: background .3s, color .3s; }
+  h1, h2, h3 { font-family: var(--font-heading); }
   #app { max-width: 560px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; }
+
+  /* ---- Theme extras (opt-in per theme via body classes) ---- */
+  body.theme-animated .btn, body.theme-animated .fab, body.theme-animated .albumTile, body.theme-animated .statTile { transition: transform .15s ease, box-shadow .15s ease; }
+  body.theme-animated .btn:active, body.theme-animated .fab:active { transform: scale(.94); }
+  body.theme-animated .card:hover { box-shadow: 0 4px 16px rgba(0,0,0,.06); }
+  body.theme-glow .btn, body.theme-glow .fab { box-shadow: 0 0 14px color-mix(in srgb, var(--accent) 55%, transparent); }
+  body.theme-aurora #app { position: relative; }
+  body.theme-aurora #app::before {
+    content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+    background: radial-gradient(circle at 20% 20%, color-mix(in srgb, var(--accent) 35%, transparent), transparent 55%),
+                radial-gradient(circle at 80% 30%, color-mix(in srgb, #4ecdc4 30%, transparent), transparent 50%),
+                radial-gradient(circle at 50% 80%, color-mix(in srgb, var(--accent-soft) 40%, transparent), transparent 55%),
+                var(--bg);
+    background-size: 200% 200%;
+    animation: auroraShift 18s ease infinite;
+  }
+  @keyframes auroraShift {
+    0%, 100% { background-position: 0% 0%, 100% 0%, 50% 100%; }
+    50% { background-position: 100% 100%, 0% 100%, 50% 0%; }
+  }
+
+  /* ---- Header banner ---- */
+  #bannerHeader { display: none; width: 100%; height: 120px; background-size: cover; background-position: center; }
+  #bannerHeader.show { display: block; }
+
+  /* ---- Theme picker / editor ---- */
+  .themeGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .themeSwatch { border: 2px solid var(--border); border-radius: 12px; padding: 10px; cursor: pointer; text-align: left; background: none; }
+  .themeSwatch.active { border-color: var(--accent); }
+  .themeSwatch .swatchBar { display: flex; gap: 4px; height: 20px; border-radius: 6px; overflow: hidden; margin-bottom: 6px; }
+  .themeSwatch .swatchBar span { flex: 1; }
+  .themeSwatch .swatchName { font-size: 12px; font-weight: 600; }
+  .colorField { display: flex; align-items: center; justify-content: space-between; padding: 6px 0; }
+  .colorField input[type=color] { width: 44px; height: 30px; border: 1px solid var(--border); border-radius: 6px; padding: 0; background: none; }
 
   /* ---- Auth ---- */
   #authScreen { display: flex; flex-direction: column; justify-content: center; min-height: 100vh; padding: 24px; }
@@ -26,8 +67,8 @@
   #authScreen p.tag { color: var(--ink-soft); margin-top: 0; margin-bottom: 28px; }
   .field { margin-bottom: 14px; }
   .field label { display: block; font-size: 13px; color: var(--ink-soft); margin-bottom: 4px; }
-  .field input { width: 100%; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; font-size: 16px; background: var(--card); }
-  .btn { display: inline-block; width: 100%; padding: 13px; border: none; border-radius: 10px; background: var(--accent); color: #fff; font-size: 16px; font-weight: 600; cursor: pointer; margin-top: 6px; }
+  .field input { width: 100%; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius); font-size: 16px; background: var(--card); font-family: var(--font-body); }
+  .btn { display: inline-block; width: 100%; padding: 13px; border: none; border-radius: var(--radius); background: var(--accent); color: #fff; font-size: 16px; font-weight: 600; cursor: pointer; margin-top: 6px; font-family: var(--font-body); }
   .btn.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
   .btn.small { width: auto; padding: 8px 14px; font-size: 14px; }
   .switchMode { text-align: center; margin-top: 18px; font-size: 14px; color: var(--ink-soft); }
@@ -48,7 +89,7 @@
   .tabpane { display: none; }
   .tabpane.active { display: block; }
 
-  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 14px; margin-bottom: 10px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; margin-bottom: 10px; }
   .empty { color: var(--ink-soft); text-align: center; padding: 40px 12px; font-size: 14px; }
 
   /* Messages */
@@ -104,11 +145,11 @@
 
   /* Photos */
   .albumGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  .albumTile { border-radius: 12px; overflow: hidden; background: var(--card); border: 1px solid var(--border); cursor: pointer; }
+  .albumTile { border-radius: var(--radius); overflow: hidden; background: var(--card); border: 1px solid var(--border); cursor: pointer; }
   .albumTile .thumb { height: 90px; background: var(--accent-soft); background-size: cover; background-position: center; display: flex; align-items: center; justify-content: center; font-size: 26px; }
   .albumTile .lbl { padding: 8px 10px; font-size: 13px; font-weight: 600; }
   .photoGrid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-top: 12px; }
-  .photoTile { position: relative; aspect-ratio: 1; border-radius: 8px; overflow: hidden; background: var(--accent-soft); }
+  .photoTile { position: relative; aspect-ratio: 1; border-radius: calc(var(--radius) * .7); overflow: hidden; background: var(--accent-soft); }
   .photoTile img { width: 100%; height: 100%; object-fit: cover; display: block; cursor: pointer; }
   .photoTile .photoDel { position: absolute; top: 3px; right: 3px; background: rgba(0,0,0,.55); color: #fff; border: none; border-radius: 50%; width: 22px; height: 22px; font-size: 12px; cursor: pointer; line-height: 1; }
   .photoTile .photoShare { position: absolute; bottom: 3px; right: 3px; background: rgba(0,0,0,.55); color: #fff; border: none; border-radius: 6px; padding: 3px 6px; font-size: 12px; cursor: pointer; line-height: 1; }
@@ -168,12 +209,16 @@
 
   <!-- SHELL -->
   <div id="shell">
+    <div id="bannerHeader"></div>
     <header class="topbar">
       <div>
         <h2>House of Martin</h2>
         <div class="sub" id="whoami"></div>
       </div>
-      <button class="btn secondary small" id="signOutBtn">Sign out</button>
+      <div style="display:flex; gap:8px">
+        <button class="btn secondary small" id="themeBtn" title="Theme">🎨</button>
+        <button class="btn secondary small" id="signOutBtn">Sign out</button>
+      </div>
     </header>
 
     <main>
@@ -442,6 +487,63 @@
     </div>
   </div>
 
+  <!-- Theme picker -->
+  <div class="modalBg" id="themeModalBg">
+    <div class="modalSheet">
+      <h3>🎨 Theme</h3>
+      <p class="hh" id="themeScopeNote">Applies to your device only. <span id="themeFamilyDefaultNote"></span></p>
+      <div class="themeGrid" id="themeGrid"></div>
+      <div id="themeAdminActions" style="display:none; margin-top:14px; padding-top:10px; border-top:1px dashed var(--border)">
+        <button class="btn small secondary" id="setFamilyDefaultBtn">🌟 Set current theme as family default</button>
+        <button class="btn small secondary" id="openThemeEditorBtn" style="margin-top:8px">🛠 Build a custom theme</button>
+        <button class="btn small secondary" id="setBannerBtn" style="margin-top:8px">🖼 Set header banner photo</button>
+        <input type="file" id="bannerFileInput" accept="image/*" style="display:none">
+        <button class="btn small secondary" id="clearBannerBtn" style="margin-top:8px">Remove header banner</button>
+      </div>
+      <button class="btn secondary" id="themeCloseBtn" style="margin-top:14px">Close</button>
+    </div>
+  </div>
+
+  <!-- Custom theme editor (admin) -->
+  <div class="modalBg" id="themeEditorModalBg">
+    <div class="modalSheet">
+      <h3>🛠 Custom Theme</h3>
+      <div class="field"><label>Name</label><input type="text" id="teName" placeholder="e.g. Our Family Colors"></div>
+      <div class="colorField"><label>Background</label><input type="color" id="teBg"></div>
+      <div class="colorField"><label>Card</label><input type="color" id="teCard"></div>
+      <div class="colorField"><label>Text</label><input type="color" id="teInk"></div>
+      <div class="colorField"><label>Accent</label><input type="color" id="teAccent"></div>
+      <div class="field"><label>Corner style</label>
+        <select id="teRadius">
+          <option value="2">Sharp</option>
+          <option value="10" selected>Rounded</option>
+          <option value="22">Very round</option>
+        </select>
+      </div>
+      <div class="field"><label>Heading font</label>
+        <select id="teFontHeading">
+          <option value="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" selected>System</option>
+          <option value="'Playfair Display', serif">Elegant serif</option>
+          <option value="'Fredoka', sans-serif">Playful rounded</option>
+          <option value="'Caveat', cursive">Handwritten</option>
+          <option value="'Special Elite', monospace">Vintage typewriter</option>
+          <option value="'JetBrains Mono', monospace">Monospace</option>
+        </select>
+      </div>
+      <div class="field"><label>Animation</label>
+        <select id="teAnim">
+          <option value="none" selected>None</option>
+          <option value="subtle">Subtle (button/card motion)</option>
+          <option value="glow">Glow accents</option>
+          <option value="aurora">Full — animated background + glow</option>
+        </select>
+      </div>
+      <button class="btn small secondary" id="tePreviewBtn">Preview</button>
+      <button class="btn small" id="teSaveBtn" style="margin-top:8px">Save custom theme</button>
+      <button class="btn secondary" id="teCancelBtn" style="margin-top:8px">Cancel</button>
+    </div>
+  </div>
+
 </div>
 
 <script type="module">
@@ -487,6 +589,53 @@ if (_isLocalDev) {
   console.log('✓ Connected to local emulators');
 }
 
+// ---------- Theming ----------
+const SYSTEM_FONT = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+const THEME_PRESETS = {
+  classic:  { id: 'classic', name: 'Classic Family', vars: { bg:'#f6f1ea', card:'#ffffff', ink:'#2a2220', inkSoft:'#6b5f58', accent:'#a9432f', accentSoft:'#f0ded7', border:'#e7ddd2', radius:'12', fontHeading:SYSTEM_FONT, fontBody:SYSTEM_FONT }, anim:'none' },
+  fbBlue:   { id: 'fbBlue', name: 'Facebook Blue', vars: { bg:'#f0f2f5', card:'#ffffff', ink:'#050505', inkSoft:'#65676b', accent:'#1877f2', accentSoft:'#e7f3ff', border:'#dddfe2', radius:'8', fontHeading:SYSTEM_FONT, fontBody:SYSTEM_FONT }, anim:'none' },
+  igGrid:   { id: 'igGrid', name: 'Instagram Grid', vars: { bg:'#fafafa', card:'#ffffff', ink:'#262626', inkSoft:'#8e8e8e', accent:'#000000', accentSoft:'#efefef', border:'#dbdbdb', radius:'4', fontHeading:SYSTEM_FONT, fontBody:SYSTEM_FONT }, anim:'none' },
+  kraft:    { id: 'kraft', name: 'Kraft & Twine', vars: { bg:'#e8dcc4', card:'#fdf8ee', ink:'#4a3826', inkSoft:'#8a7350', accent:'#a3562e', accentSoft:'#eddcc0', border:'#c9b48f', radius:'2', fontHeading:"'Caveat', cursive", fontBody:SYSTEM_FONT }, anim:'none' },
+  midnight: { id: 'midnight', name: 'Midnight Family', vars: { bg:'#0f1420', card:'#1a2233', ink:'#e8e4da', inkSoft:'#9aa3b5', accent:'#d4af6a', accentSoft:'#2a3348', border:'#2e3850', radius:'12', fontHeading:"'Playfair Display', serif", fontBody:SYSTEM_FONT }, anim:'none' },
+  retro:    { id: 'retro', name: 'Retro Photo Album', vars: { bg:'#e8dcc0', card:'#fff8e7', ink:'#3a2e1f', inkSoft:'#7a6a52', accent:'#b5622e', accentSoft:'#f0d9b5', border:'#d4bc8a', radius:'0', fontHeading:"'Special Elite', monospace", fontBody:SYSTEM_FONT }, anim:'none' },
+  pastel:   { id: 'pastel', name: 'Pastel Nursery', vars: { bg:'#fdf1f7', card:'#ffffff', ink:'#5c4a5a', inkSoft:'#a3899e', accent:'#e893b8', accentSoft:'#fce4ee', border:'#f5d5e3', radius:'22', fontHeading:"'Fredoka', sans-serif", fontBody:"'Fredoka', sans-serif" }, anim:'subtle' },
+  nature:   { id: 'nature', name: 'Nature / Botanical', vars: { bg:'#eef3e6', card:'#ffffff', ink:'#2f3d26', inkSoft:'#6b7a5e', accent:'#5b8c3e', accentSoft:'#dcebc9', border:'#c7dab0', radius:'16', fontHeading:SYSTEM_FONT, fontBody:SYSTEM_FONT }, anim:'subtle' },
+  neon:     { id: 'neon', name: 'Holographic / Neon', vars: { bg:'#0a0118', card:'#1e0f3c', ink:'#f0e6ff', inkSoft:'#b39ddb', accent:'#ff4ecd', accentSoft:'#3d1a5c', border:'#5a2d8c', radius:'16', fontHeading:"'Playfair Display', serif", fontBody:SYSTEM_FONT }, anim:'aurora' },
+  command:  { id: 'command', name: 'Command Center', vars: { bg:'#12141a', card:'#1a1d26', ink:'#e4e6ec', inkSoft:'#8b909e', accent:'#3ba7ff', accentSoft:'#1a2c42', border:'#2a2d38', radius:'4', fontHeading:"'JetBrains Mono', monospace", fontBody:"'JetBrains Mono', monospace" }, anim:'none' },
+};
+let customThemes = [];
+let familyDefaultThemeId = 'classic';
+let activeThemeId = 'classic';
+let bannerUrl = null;
+
+function allThemes() { return [...Object.values(THEME_PRESETS), ...customThemes]; }
+function getTheme(id) { return allThemes().find(t => t.id === id) || THEME_PRESETS.classic; }
+
+function applyTheme(themeOrId) {
+  const t = typeof themeOrId === 'string' ? getTheme(themeOrId) : themeOrId;
+  const root = document.documentElement.style;
+  root.setProperty('--bg', t.vars.bg);
+  root.setProperty('--card', t.vars.card);
+  root.setProperty('--ink', t.vars.ink);
+  root.setProperty('--ink-soft', t.vars.inkSoft);
+  root.setProperty('--accent', t.vars.accent);
+  root.setProperty('--accent-soft', t.vars.accentSoft);
+  root.setProperty('--border', t.vars.border);
+  root.setProperty('--radius', t.vars.radius + 'px');
+  root.setProperty('--font-heading', t.vars.fontHeading);
+  root.setProperty('--font-body', t.vars.fontBody);
+  document.body.classList.toggle('theme-animated', t.anim === 'subtle' || t.anim === 'aurora');
+  document.body.classList.toggle('theme-glow', t.anim === 'glow' || t.anim === 'aurora');
+  document.body.classList.toggle('theme-aurora', t.anim === 'aurora');
+  activeThemeId = t.id;
+}
+
+function loadAndApplyMyTheme() {
+  const override = localStorage.getItem('hom_theme');
+  applyTheme((override && getTheme(override)) ? override : familyDefaultThemeId);
+}
+applyTheme(localStorage.getItem('hom_theme') || 'classic'); // pre-login, so the sign-in screen matches too
+
 let currentUser = null;   // Firebase Auth user
 let myDoc = null;         // Firestore users/{uid} doc data
 let myHouseholdDoc = null; // Firestore households/{myDoc.householdId} doc data, cached
@@ -500,7 +649,7 @@ let digestSubmissions = [];
 let pendingCount = 0, eventsCount = 0, albumsCount = 0;
 let unsubMsgs = null, unsubEvents = null, unsubAlbums = null, unsubContacts = null, unsubPending = null,
     unsubInvites = null, unsubHouseholds = null, unsubBranches = null, unsubPhotos = null, unsubOccasions = null,
-    unsubDMs = null, unsubDigest = null;
+    unsubDMs = null, unsubDigest = null, unsubAppearance = null;
 let _openAlbumId = null;
 
 // ---------- Auth screen wiring ----------
@@ -578,6 +727,7 @@ onAuthStateChanged(auth, async (user) => {
   initOccasions();
   initDMs();
   initDigestSubmissions();
+  initAppearance();
   if (myDoc.role === 'admin') { initAdmin(); }
 });
 
@@ -586,8 +736,8 @@ function show(id) {
 }
 
 function cleanupListeners() {
-  [unsubMsgs, unsubEvents, unsubAlbums, unsubContacts, unsubPending, unsubInvites, unsubHouseholds, unsubBranches, unsubPhotos, unsubOccasions, unsubDMs, unsubDigest].forEach(u => u && u());
-  unsubMsgs = unsubEvents = unsubAlbums = unsubContacts = unsubPending = unsubInvites = unsubHouseholds = unsubBranches = unsubPhotos = unsubOccasions = unsubDMs = unsubDigest = null;
+  [unsubMsgs, unsubEvents, unsubAlbums, unsubContacts, unsubPending, unsubInvites, unsubHouseholds, unsubBranches, unsubPhotos, unsubOccasions, unsubDMs, unsubDigest, unsubAppearance].forEach(u => u && u());
+  unsubMsgs = unsubEvents = unsubAlbums = unsubContacts = unsubPending = unsubInvites = unsubHouseholds = unsubBranches = unsubPhotos = unsubOccasions = unsubDMs = unsubDigest = unsubAppearance = null;
 }
 
 // ---------- Tab nav ----------
@@ -2020,6 +2170,123 @@ $('applyBirthdaysBtn').onclick = async () => {
   _birthdayMatches = [];
   $('matchResults').innerHTML = '';
   $('applyBirthdaysBtn').style.display = 'none';
+};
+
+// ---------- Theming (live sync + UI) ----------
+function initAppearance() {
+  unsubAppearance = onSnapshot(doc(db, 'config', 'appearance'), (snap) => {
+    const data = snap.exists() ? snap.data() : {};
+    familyDefaultThemeId = data.defaultThemeId || 'classic';
+    customThemes = data.customThemes || [];
+    bannerUrl = data.bannerUrl || null;
+    loadAndApplyMyTheme();
+    updateBannerDisplay();
+    if ($('themeModalBg').classList.contains('open')) renderThemeGrid();
+  });
+}
+
+function updateBannerDisplay() {
+  const el = $('bannerHeader');
+  if (bannerUrl) {
+    el.style.backgroundImage = `url(${bannerUrl})`;
+    el.classList.add('show');
+  } else {
+    el.classList.remove('show');
+    el.style.backgroundImage = '';
+  }
+}
+
+$('themeBtn').onclick = () => {
+  $('themeAdminActions').style.display = (myDoc && myDoc.role === 'admin') ? 'block' : 'none';
+  $('themeFamilyDefaultNote').textContent = myDoc && myDoc.role === 'admin'
+    ? '' : `The family default is set by an admin.`;
+  renderThemeGrid();
+  $('themeModalBg').classList.add('open');
+};
+$('themeCloseBtn').onclick = () => $('themeModalBg').classList.remove('open');
+
+function renderThemeGrid() {
+  $('themeGrid').innerHTML = allThemes().map(t => `
+    <button class="themeSwatch ${t.id === activeThemeId ? 'active' : ''}" data-id="${t.id}">
+      <div class="swatchBar">
+        <span style="background:${t.vars.bg}"></span>
+        <span style="background:${t.vars.accent}"></span>
+        <span style="background:${t.vars.card}"></span>
+      </div>
+      <div class="swatchName">${escapeHtml(t.name)}${t.id === familyDefaultThemeId ? ' 🌟' : ''}</div>
+    </button>
+  `).join('');
+  $('themeGrid').querySelectorAll('.themeSwatch').forEach(btn => {
+    btn.onclick = () => {
+      applyTheme(btn.dataset.id);
+      localStorage.setItem('hom_theme', btn.dataset.id);
+      renderThemeGrid();
+    };
+  });
+}
+
+$('setFamilyDefaultBtn').onclick = async () => {
+  await setDoc(doc(db, 'config', 'appearance'), { defaultThemeId: activeThemeId }, { merge: true });
+};
+
+$('setBannerBtn').onclick = () => $('bannerFileInput').click();
+$('bannerFileInput').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  const sRef = ref(storage, `appearance/banner_${Date.now()}_${file.name}`);
+  await uploadBytes(sRef, file, { customMetadata: { uploaderId: currentUser.uid } });
+  const url = await getDownloadURL(sRef);
+  await setDoc(doc(db, 'config', 'appearance'), { bannerUrl: url }, { merge: true });
+});
+$('clearBannerBtn').onclick = async () => {
+  await setDoc(doc(db, 'config', 'appearance'), { bannerUrl: null }, { merge: true });
+};
+
+// ---------- Custom theme editor ----------
+let _teReturnThemeId = null;
+$('openThemeEditorBtn').onclick = () => {
+  const base = getTheme(activeThemeId);
+  $('teName').value = '';
+  $('teBg').value = base.vars.bg; $('teCard').value = base.vars.card;
+  $('teInk').value = base.vars.ink; $('teAccent').value = base.vars.accent;
+  $('teRadius').value = base.vars.radius;
+  $('teFontHeading').value = base.vars.fontHeading;
+  $('teAnim').value = base.anim;
+  _teReturnThemeId = activeThemeId;
+  $('themeModalBg').classList.remove('open');
+  $('themeEditorModalBg').classList.add('open');
+};
+
+function draftThemeFromEditor() {
+  const bg = $('teBg').value, card = $('teCard').value, ink = $('teInk').value, accent = $('teAccent').value;
+  return {
+    id: 'draft', name: $('teName').value.trim() || 'Custom Theme',
+    vars: {
+      bg, card, ink,
+      inkSoft: `color-mix(in srgb, ${ink} 65%, ${bg})`,
+      accent, accentSoft: `color-mix(in srgb, ${accent} 18%, ${card})`,
+      border: `color-mix(in srgb, ${ink} 14%, ${bg})`,
+      radius: $('teRadius').value, fontHeading: $('teFontHeading').value, fontBody: SYSTEM_FONT
+    },
+    anim: $('teAnim').value
+  };
+}
+$('tePreviewBtn').onclick = () => applyTheme(draftThemeFromEditor());
+$('teCancelBtn').onclick = () => {
+  applyTheme(_teReturnThemeId);
+  $('themeEditorModalBg').classList.remove('open');
+  $('themeModalBg').classList.add('open');
+  renderThemeGrid();
+};
+$('teSaveBtn').onclick = async () => {
+  const draft = draftThemeFromEditor();
+  draft.id = 'custom_' + Date.now();
+  const updated = [...customThemes, draft];
+  await setDoc(doc(db, 'config', 'appearance'), { customThemes: updated, defaultThemeId: familyDefaultThemeId }, { merge: true });
+  applyTheme(draft);
+  localStorage.setItem('hom_theme', draft.id);
+  $('themeEditorModalBg').classList.remove('open');
 };
 
 // ---------- utils ----------

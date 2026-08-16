@@ -26,5 +26,19 @@ service firebase.storage {
       // delete handler already tolerates (wrapped in try/catch, logs and moves on).
       allow delete: if request.auth != null && resource.metadata.uploaderId == request.auth.uid;
     }
+
+    match /appearance/{fileName} {
+      // Header banner photo. Same "signed in" trust boundary as albums/ above (see that
+      // comment for why — cross-service admin checks proved unreliable here). The app UI
+      // only shows the upload control to admins, and the actual bannerUrl that gets
+      // *displayed* is gated by firestore.rules' config/appearance write (admin-only) — a
+      // non-admin could in theory upload a stray file to this path, but it would never be
+      // referenced anywhere.
+      allow read: if request.auth != null;
+      allow create: if request.auth != null
+        && request.resource.size < 15 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+      allow delete: if request.auth != null && resource.metadata.uploaderId == request.auth.uid;
+    }
   }
 }
