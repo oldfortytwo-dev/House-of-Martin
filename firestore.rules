@@ -131,5 +131,13 @@ service cloud.firestore {
         allow update, delete: if signedIn() && (resource.data.uploaderId == request.auth.uid || isAdmin());
       }
     }
+
+    match /posts/{postId} {
+      // Family Wall — a direct text+photo post, no album required. Family-wide only for now
+      // (no per-post audience targeting yet, unlike events).
+      allow read: if isApprovedMember();
+      allow create: if isApprovedMember() && request.resource.data.authorId == request.auth.uid;
+      allow update, delete: if isAdmin() || (signedIn() && resource.data.authorId == request.auth.uid);
+    }
   }
 }

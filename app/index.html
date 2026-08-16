@@ -218,6 +218,14 @@
   .photoTile .photoDel { position: absolute; top: 3px; right: 3px; background: rgba(0,0,0,.55); color: #fff; border: none; border-radius: 50%; width: 22px; height: 22px; font-size: 12px; cursor: pointer; line-height: 1; }
   .photoTile .photoShare { position: absolute; bottom: 3px; right: 3px; background: rgba(0,0,0,.55); color: #fff; border: none; border-radius: 6px; padding: 3px 6px; font-size: 12px; cursor: pointer; line-height: 1; }
 
+  /* Wall */
+  .wallPost { margin-bottom: 12px; }
+  .wallPost .who { font-weight: 700; font-size: 14px; }
+  .wallPost .when { font-size: 12px; color: var(--ink-soft); margin-bottom: 8px; }
+  .wallPost .txt { font-size: 15px; white-space: pre-wrap; margin-bottom: 8px; }
+  .wallPost img { width: 100%; border-radius: calc(var(--radius) * .7); display: block; cursor: pointer; }
+  .wallPost .wallDel { float: right; }
+
   /* Share */
   .cardHead { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
   .cardHead h3 { flex: 1; }
@@ -328,10 +336,29 @@
         </div>
       </section>
 
-      <!-- Photos -->
+      <!-- Wall -->
       <section class="tabpane" id="pane-photos">
-        <div class="albumGrid" id="albumGrid"></div>
-        <div class="empty" id="albumEmpty" style="display:none">No albums yet. Tap + to start one.</div>
+        <div class="card" id="wallComposer">
+          <h3 style="margin-top:0">🧱 Family Wall</h3>
+          <textarea id="wallText" class="bulkPaste" rows="2" placeholder="What's on your mind?"></textarea>
+          <div style="display:flex; gap:8px; margin-top:8px; align-items:center; flex-wrap:wrap">
+            <input type="file" id="wallPhotoInput" accept="image/*" style="display:none">
+            <button class="btn small secondary" id="wallAddPhotoBtn">📷 Add photo</button>
+            <span class="hh" id="wallPhotoPreviewName"></span>
+            <button class="btn small" id="wallPostBtn" style="margin-left:auto; width:auto">Post</button>
+          </div>
+          <div class="uploadStatus" id="wallPostStatus"></div>
+        </div>
+        <div id="wallFeed"></div>
+        <div class="empty" id="wallEmpty" style="display:none">Nothing on the wall yet — be the first to post!</div>
+
+        <div style="margin:18px 0 8px; text-align:center">
+          <button class="btn small secondary" id="toggleAlbumsBtn">📁 Show organized albums</button>
+        </div>
+        <div id="albumsSection" style="display:none">
+          <div class="albumGrid" id="albumGrid"></div>
+          <div class="empty" id="albumEmpty" style="display:none">No albums yet. Tap + to start one.</div>
+        </div>
       </section>
 
       <!-- Admin -->
@@ -449,7 +476,7 @@
       <button data-tab="events"><span class="ic">📅</span>Events</button>
       <button data-tab="contacts"><span class="ic">📇</span>Contacts</button>
       <button data-tab="calendar"><span class="ic">🎂</span>Calendar</button>
-      <button data-tab="photos"><span class="ic">📷</span>Photos</button>
+      <button data-tab="photos"><span class="ic">🧱</span>Wall</button>
       <button data-tab="admin" id="adminTabBtn" style="display:none"><span class="ic">⚙️</span>Admin</button>
     </nav>
   </div>
@@ -720,8 +747,9 @@ let digestSubmissions = [];
 let pendingCount = 0, eventsCount = 0, albumsCount = 0;
 let unsubMsgs = null, unsubEvents = null, unsubAlbums = null, unsubContacts = null, unsubPending = null,
     unsubInvites = null, unsubHouseholds = null, unsubBranches = null, unsubPhotos = null, unsubOccasions = null,
-    unsubDMs = null, unsubDigest = null, unsubAppearance = null;
+    unsubDMs = null, unsubDigest = null, unsubAppearance = null, unsubWall = null;
 let _openAlbumId = null;
+let _wallPhotoFile = null;
 
 // ---------- Auth screen wiring ----------
 const $ = id => document.getElementById(id);
@@ -794,6 +822,7 @@ onAuthStateChanged(auth, async (user) => {
   initChannels();
   initEvents();
   initAlbums();
+  initWall();
   initContacts();
   initOccasions();
   initDMs();
@@ -807,8 +836,8 @@ function show(id) {
 }
 
 function cleanupListeners() {
-  [unsubMsgs, unsubEvents, unsubAlbums, unsubContacts, unsubPending, unsubInvites, unsubHouseholds, unsubBranches, unsubPhotos, unsubOccasions, unsubDMs, unsubDigest, unsubAppearance].forEach(u => u && u());
-  unsubMsgs = unsubEvents = unsubAlbums = unsubContacts = unsubPending = unsubInvites = unsubHouseholds = unsubBranches = unsubPhotos = unsubOccasions = unsubDMs = unsubDigest = unsubAppearance = null;
+  [unsubMsgs, unsubEvents, unsubAlbums, unsubContacts, unsubPending, unsubInvites, unsubHouseholds, unsubBranches, unsubPhotos, unsubOccasions, unsubDMs, unsubDigest, unsubAppearance, unsubWall].forEach(u => u && u());
+  unsubMsgs = unsubEvents = unsubAlbums = unsubContacts = unsubPending = unsubInvites = unsubHouseholds = unsubBranches = unsubPhotos = unsubOccasions = unsubDMs = unsubDigest = unsubAppearance = unsubWall = null;
 }
 
 // ---------- Tab nav ----------
@@ -1345,6 +1374,83 @@ function initAlbums() {
     if (myDoc.role === 'admin') renderDashboard();
   });
 }
+
+$('toggleAlbumsBtn').onclick = () => {
+  const showing = $('albumsSection').style.display !== 'none';
+  $('albumsSection').style.display = showing ? 'none' : 'block';
+  $('toggleAlbumsBtn').textContent = showing ? '📁 Show organized albums' : '📁 Hide organized albums';
+};
+
+// ---------- Wall (post text + photo directly, no album required) ----------
+function initWall() {
+  const q = query(collection(db, 'posts'), orderBy('createdAt', 'desc'), limit(50));
+  unsubWall = onSnapshot(q, (snap) => {
+    const wrap = $('wallFeed');
+    $('wallEmpty').style.display = snap.empty ? 'block' : 'none';
+    wrap.innerHTML = '';
+    snap.forEach(d => {
+      const p = d.data();
+      const canDelete = p.authorId === currentUser.uid || myDoc.role === 'admin';
+      const when = p.createdAt && p.createdAt.toDate ? p.createdAt.toDate().toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '';
+      const card = document.createElement('div');
+      card.className = 'card wallPost';
+      card.innerHTML = `
+        ${canDelete ? `<button class="editBtn wallDel" data-id="${d.id}">✕</button>` : ''}
+        <div class="who">${escapeHtml(p.authorName || '')}</div>
+        <div class="when">${when}</div>
+        ${p.text ? `<div class="txt">${escapeHtml(p.text)}</div>` : ''}
+        ${p.photoUrl ? `<img src="${p.photoUrl}" alt="">` : ''}
+      `;
+      if (p.photoUrl) card.querySelector('img').onclick = () => window.open(p.photoUrl, '_blank');
+      if (canDelete) {
+        card.querySelector('.wallDel').onclick = async (e) => {
+          e.stopPropagation();
+          if (!confirm('Delete this post?')) return;
+          await deleteDoc(doc(db, 'posts', d.id));
+          if (p.photoStoragePath) {
+            try { await deleteObject(ref(storage, p.photoStoragePath)); } catch (err) { console.warn('Storage delete failed', err); }
+          }
+        };
+      }
+      wrap.appendChild(card);
+    });
+  });
+}
+
+$('wallAddPhotoBtn').onclick = () => $('wallPhotoInput').click();
+$('wallPhotoInput').addEventListener('change', (e) => {
+  _wallPhotoFile = e.target.files[0] || null;
+  $('wallPhotoPreviewName').textContent = _wallPhotoFile ? '📎 ' + _wallPhotoFile.name : '';
+});
+
+$('wallPostBtn').onclick = async () => {
+  const text = $('wallText').value.trim();
+  if (!text && !_wallPhotoFile) return;
+  $('wallPostStatus').textContent = _wallPhotoFile ? 'Posting (uploading photo)…' : 'Posting…';
+  try {
+    let photoUrl = null, photoStoragePath = null;
+    if (_wallPhotoFile) {
+      const postRef = doc(collection(db, 'posts'));
+      photoStoragePath = `posts/${postRef.id}_${_wallPhotoFile.name}`;
+      const sRef = ref(storage, photoStoragePath);
+      await uploadBytes(sRef, _wallPhotoFile, { customMetadata: { uploaderId: currentUser.uid } });
+      photoUrl = await getDownloadURL(sRef);
+      await setDoc(postRef, {
+        text, photoUrl, photoStoragePath, authorId: currentUser.uid, authorName: myDoc.name, createdAt: serverTimestamp()
+      });
+    } else {
+      await addDoc(collection(db, 'posts'), {
+        text, photoUrl: null, photoStoragePath: null, authorId: currentUser.uid, authorName: myDoc.name, createdAt: serverTimestamp()
+      });
+    }
+    $('wallText').value = '';
+    _wallPhotoFile = null;
+    $('wallPhotoPreviewName').textContent = '';
+    $('wallPostStatus').textContent = '';
+  } catch (err) {
+    $('wallPostStatus').textContent = 'Failed to post: ' + (err.message || err);
+  }
+};
 
 function openAlbum(albumId, title) {
   _openAlbumId = albumId;
