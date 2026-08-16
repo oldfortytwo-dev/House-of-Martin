@@ -67,8 +67,17 @@ laziness.
 - **User** (`users/{uid}`): name, email, phone, birthdate (age shown publicly only if ≤21),
   role (member/friend/admin), status (pending/approved), householdId, inviteCodeUsed
 - **Household** (`households/{id}`): name, memberIds[], responderId (RSVPs/edits for the household),
-  phone, address, anniversary, extraContacts[] ({id, name, birthdate, phone} — family members with
-  no account of their own, e.g. young kids or relatives who'll never sign up)
+  phone, address, anniversary, extraContacts[] ({id, name, birthdate, phone, email} — family members
+  with no account of their own, e.g. young kids or relatives who'll never sign up)
+- **Occasion** (`occasions/{id}`): type ('birthday'|'anniversary'|'memorial'), name, month, day,
+  yearRaw (2-digit string, stored as-is — never auto-expanded to a 4-digit year on import, since real
+  data confirmed the same 2 digits can mean 1917 for one person's birth year and 2017 for another's
+  death year; no fixed cutoff rule is reliable), deceased/deathMonth/deathDay/deathYearRaw (birthday-range entries).
+  Admin bulk-imports these from a printed family calendar (Admin → Family Calendar). Optionally
+  linkedUserId, or linkedHouseholdId+linkedContactId — set by Admin → "Link Calendar Birthdays to
+  Contacts", which matches occasions to a User or household extraContacts entry by exact name and,
+  after admin review of the guessed year, writes a real `birthdate` onto that contact and stores the
+  link back on the occasion so re-matching doesn't duplicate it.
 - **Branch** (`branches/{id}`): name, householdIds[]
 - **InviteCode** (`inviteCodes/{code}`): role (what new signups using this code become)
 - **Channel** (`channels/{id}`): name, type (family/household/branch), householdId or branchId, invitedUserIds[] (friends)
