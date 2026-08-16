@@ -22,9 +22,10 @@ the `auggies-deploy` repo). Mobile-first, installable as a PWA.
 | File | Purpose |
 |---|---|
 | `app/index.html` | The entire app shell — auth, nav, all tabs (Messages/Events/Contacts/Photos/Admin) |
-| `firebase.json` | Hosting + Firestore + Storage config, plus emulator ports |
+| `firebase.json` | Hosting + Firestore + Storage + Functions config, plus emulator ports |
 | `firestore.rules` | Firestore security rules |
 | `storage.rules` | Cloud Storage security rules (photo uploads) — see gotcha below |
+| `functions/index.js` | Cloud Functions — weekly digest email (`weeklyDigest`, `sendDigestNow`) |
 | `.firebaserc` | Project alias, points at the real `house-of-martin` project |
 
 ## Firebase Project
@@ -122,6 +123,43 @@ suspecting the boolean logic.
   - `rsvps` subcollection, keyed by member uid: status, submittedBy, name, householdId, viaHousehold
 - **Album** (`albums/{id}`): title, createdBy, visibility, invitedUserIds[] (friends)
   - `photos` subcollection: url, storagePath, uploaderId, uploaderName, createdAt
+- **DigestSubmission** (`digestSubmissions/{id}`): text, submittedBy, submittedByName,
+  includedInDigestAt (null until a real — not test — digest send marks it, via Admin SDK which
+  bypasses rules). Any approved member can add one from Events tab → "Add to This Week's Family Email."
+
+## Weekly Digest Email (Cloud Functions)
+
+`functions/` — first Cloud Functions codebase in this project, deployed separately from
+hosting/rules: `firebase deploy --only functions --project house-of-martin`. Requires the
+Blaze plan (already on it, since Storage needed it) and, one-time, enabling the Secret
+Manager API by hand via the console (same class of manual step as Storage's "Get Started" —
+`firebase deploy --only functions` will fail with a 403 pointing at the enable URL the first
+time; retrying after enabling it works immediately, no propagation delay observed).
+
+- `weeklyDigest`: scheduled, Mondays 8am America/New_York. Emails every approved member —
+  upcoming birthdays/anniversaries (next 7 days, from `occasions`), upcoming events (next 7
+  days), and any open `digestSubmissions` (marked included after sending).
+- `sendDigestNow`: admin-only callable (checks the caller's Firestore `users/{uid}` doc — Admin
+  SDK bypasses `firestore.rules` entirely, so this check is manual, not automatic). Accepts an
+  optional `{ testEmails: [...] }` — when present, sends only to those addresses instead of the
+  real family list, and does **not** mark submissions as included, so a test run is repeatable
+  and never spoils a surprise send to the whole family. The Admin tab's UI exposes this as two
+  separate buttons ("Send test to those emails only" vs. a confirm-gated "Send the real digest").
+- Sent via Gmail SMTP (nodemailer), not a third-party email service — fine at family-list volume
+  (well under Gmail's ~500/day limit). Credentials are two Firebase secrets, `GMAIL_USER` and
+  `GMAIL_APP_PASSWORD` (a Google Account "App Password," requires 2-Step Verification already on;
+  the App Passwords page is no longer linked from the main Security settings page — go straight to
+  `myaccount.google.com/apppasswords`). **Never set secret values via the Bash tool or by asking
+  the user to paste them in chat** — `firebase functions:secrets:set NAME --project house-of-martin`
+  must be run by the user in their own terminal, since the CLI's prompt hides the input and there's
+  no way to relay a hidden interactive prompt through this session. After setting/rotating a secret,
+  redeploy functions for it to take effect.
+- Verified end-to-end against the emulator before real secrets existed: seeded a fake
+  `functions/.secret.local`, confirmed a non-admin's call was denied in ~2ms (before touching
+  Firestore), and confirmed an admin's call correctly built digest content from seeded
+  occasions/events/submissions and reached real Gmail SMTP servers, failing only with a legitimate
+  "bad credentials" rejection — proof the whole pipeline was correct before real credentials were
+  wired in. `.secret.local` is gitignored (`*.local`) and was deleted after testing.
 
 ## Roles & Privacy
 
@@ -142,11 +180,11 @@ Facebook/copy fallback), household self-service editing for the responder
 handoff/extraContacts; member add-remove and moving a contact to a *different*
 household stay admin-only since those touch documents the responder doesn't
 own), DM channels (genuinely private, not just UI-hidden — see the Firestore
-rules gotcha above).
+rules gotcha above), weekly digest email (Cloud Functions — see section above).
 
-**Deferred:** notification digests, family tree view, item sign-up lists,
-native app wrapper, deactivating a real account holder's login (vs. the
-deceased-toggle already built for no-account extraContacts).
+**Deferred:** family tree view, item sign-up lists, native app wrapper,
+deactivating a real account holder's login (vs. the deceased-toggle already
+built for no-account extraContacts).
 
 ## Working Style / Preferences
 
