@@ -939,6 +939,8 @@ $('createHouseholdBtn').onclick = async () => {
   $('newHouseholdName').value = '';
 };
 
+let expandedHouseholdIds = new Set();
+
 function renderHouseholdsAdmin() {
   const wrap = $('householdList');
   if (!households.length) { wrap.innerHTML = '<div class="empty">No households yet.</div>'; return; }
@@ -946,6 +948,24 @@ function renderHouseholdsAdmin() {
   households.forEach(hh => {
     const box = document.createElement('div');
     box.className = 'hhEditor';
+    const memberCount = (hh.memberIds || []).length;
+    const extraCount = (hh.extraContacts || []).length;
+    const summary = `
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px">
+        <div>
+          <div class="nm">${escapeHtml(hh.name)}</div>
+          <div class="hh">${hh.address ? escapeHtml(hh.address) + ' · ' : ''}${memberCount} member${memberCount === 1 ? '' : 's'}${extraCount ? `, ${extraCount} contact${extraCount === 1 ? '' : 's'} without an account` : ''}</div>
+        </div>
+        <button class="btn small secondary hhToggle">${expandedHouseholdIds.has(hh.id) ? 'Close' : 'Edit'}</button>
+      </div>`;
+
+    if (!expandedHouseholdIds.has(hh.id)) {
+      box.innerHTML = summary;
+      box.querySelector('.hhToggle').onclick = () => { expandedHouseholdIds.add(hh.id); renderHouseholdsAdmin(); };
+      wrap.appendChild(box);
+      return;
+    }
+
     const memberOptions = allApprovedUsers.map(u => {
       const checked = (hh.memberIds || []).includes(u.id) ? 'checked' : '';
       return `<label class="chk"><input type="checkbox" value="${u.id}" ${checked}> ${escapeHtml(u.name)}${ageBadgeHtml(u)}</label>`;
@@ -960,8 +980,9 @@ function renderHouseholdsAdmin() {
         <button class="editBtn ecDel" data-id="${ec.id}">✕</button>
       </div>`).join('') || '<div class="hh">None yet</div>';
     box.innerHTML = `
-      <div class="nm">${escapeHtml(hh.name)}</div>
-      <div class="chkGroup">${memberOptions}</div>
+      ${summary}
+      <div class="ecSection" style="border-top:none; margin-top:10px; padding-top:0">
+        <div class="chkGroup">${memberOptions}</div>
       <div class="field" style="margin-top:8px"><label>Responds for household (RSVPs/edits shared info)</label>
         <select class="hhResponder">${responderOptions}</select>
       </div>
@@ -994,7 +1015,9 @@ function renderHouseholdsAdmin() {
         </div>
         <button class="btn small secondary ecAddBulk">Add from list</button>
       </div>
+      </div>
     `;
+    box.querySelector('.hhToggle').onclick = () => { expandedHouseholdIds.delete(hh.id); renderHouseholdsAdmin(); };
     box.querySelector('.hhSave').onclick = async () => {
       const selected = Array.from(box.querySelectorAll('.chkGroup input[type=checkbox]:checked')).map(c => c.value);
       const responderChoice = box.querySelector('.hhResponder').value || null;
