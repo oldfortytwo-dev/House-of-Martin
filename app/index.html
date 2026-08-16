@@ -186,6 +186,10 @@
 
       <!-- Contacts -->
       <section class="tabpane" id="pane-contacts">
+        <div class="card" id="myHouseholdCard" style="display:none">
+          <h3 style="margin-top:0">🏠 Edit My Household</h3>
+          <div id="myHouseholdBody"></div>
+        </div>
         <div class="card" id="contactList"></div>
       </section>
 
@@ -780,6 +784,7 @@ function initContacts() {
     });
     myHouseholdDoc = myDoc.householdId ? (householdsById[myDoc.householdId] || null) : null;
     renderContacts();
+    renderMyHousehold();
     renderChannelList();
     if (myDoc.role === 'admin') renderHouseholdsAdmin();
   });
@@ -819,6 +824,137 @@ function renderContacts() {
     return header + memberRows + extraRows;
   }).join('');
   wrap.querySelectorAll('.editBtn').forEach(b => { b.onclick = () => openEditProfile(b.dataset.uid); });
+}
+
+// ---------- Household self-service (responder edits their own household) ----------
+let myHouseholdEcState = {}; // extraContact id -> 'edit' | undefined
+
+function renderMyHousehold() {
+  const card = $('myHouseholdCard');
+  if (!myHouseholdDoc || myHouseholdDoc.responderId !== currentUser.uid) { card.style.display = 'none'; return; }
+  card.style.display = 'block';
+  const hh = myHouseholdDoc;
+  const body = $('myHouseholdBody');
+
+  const responderOptions = (hh.memberIds || []).map(uid => {
+    const u = usersById[uid];
+    return `<option value="${uid}" ${hh.responderId === uid ? 'selected' : ''}>${escapeHtml(u ? u.name : uid)}</option>`;
+  }).join('') || `<option value="${currentUser.uid}" selected>${escapeHtml(myDoc.name)}</option>`;
+
+  const extraRows = (hh.extraContacts || []).map(ec => {
+    if (myHouseholdEcState[ec.id] === 'edit') {
+      return `<div class="hhEditor" data-ecid="${ec.id}">
+        <div class="field"><label>Name</label><input type="text" class="mhEditName" value="${escapeHtml(ec.name)}"></div>
+        <div style="display:flex; gap:6px; flex-wrap:wrap">
+          <input type="date" class="mhEditBirthdate" value="${ec.birthdate || ''}" style="flex:1; min-width:120px">
+          <input type="tel" class="mhEditPhone" value="${escapeHtml(ec.phone || '')}" placeholder="Phone" style="flex:1; min-width:100px">
+          <input type="email" class="mhEditEmail" value="${escapeHtml(ec.email || '')}" placeholder="Email" style="flex:1; min-width:120px">
+        </div>
+        <div style="display:flex; gap:8px; margin-top:8px">
+          <button class="btn small mhSaveEdit" data-id="${ec.id}">Save</button>
+          <button class="btn secondary small mhCancelEdit" data-id="${ec.id}">Cancel</button>
+        </div>
+      </div>`;
+    }
+    return `
+    <div class="contactRow">
+      <div><div class="nm">${escapeHtml(ec.name)}${ec.deceased ? ' 🕊' : ''}${ageBadgeHtml(ec)}${ec.phone || ec.email ? ` <span class="hh">${escapeHtml([ec.phone, ec.email].filter(Boolean).join(' · '))}</span>` : ''}</div></div>
+      <button class="editBtn mhEditBtn" data-id="${ec.id}">✎</button>
+      <button class="editBtn mhDeceasedBtn" data-id="${ec.id}" title="Mark as deceased">${ec.deceased ? '↩' : '🕊'}</button>
+      <button class="editBtn mhDelBtn" data-id="${ec.id}">✕</button>
+    </div>`;
+  }).join('') || '<div class="hh">None yet</div>';
+
+  body.innerHTML = `
+    <div class="field"><label>Household name</label><input type="text" id="mhName" value="${escapeHtml(hh.name || '')}"></div>
+    <div class="field"><label>Household phone</label><input type="tel" id="mhPhone" value="${escapeHtml(hh.phone || '')}"></div>
+    <div class="field"><label>Household address</label><input type="text" id="mhAddress" value="${escapeHtml(hh.address || '')}"></div>
+    <div class="field"><label>Anniversary</label><input type="date" id="mhAnniversary" value="${hh.anniversary || ''}"></div>
+    <div class="field"><label>Responds for household</label><select id="mhResponder">${responderOptions}</select></div>
+    <button class="btn small" id="mhSaveBtn">Save</button>
+
+    <div class="ecSection">
+      <div class="nm" style="font-size:13px">Family members without their own account</div>
+      <div style="margin-top:6px">${extraRows}</div>
+      <div class="field" style="margin-top:10px"><label>Add one (name, birthdate, phone, email)</label>
+        <div style="display:flex; gap:6px; flex-wrap:wrap">
+          <input type="text" id="mhEcName" placeholder="Name" style="flex:2; min-width:100px">
+          <input type="date" id="mhEcBirthdate" style="flex:1; min-width:120px">
+          <input type="tel" id="mhEcPhone" placeholder="Phone (optional)" style="flex:1; min-width:100px">
+          <input type="email" id="mhEcEmail" placeholder="Email (optional)" style="flex:1; min-width:120px">
+        </div>
+      </div>
+      <button class="btn small secondary" id="mhEcAddOne">Add</button>
+      <div class="field" style="margin-top:10px"><label>Or paste a list — one per line: Name, YYYY-MM-DD, phone, email</label>
+        <textarea id="mhEcBulk" class="bulkPaste" rows="3" placeholder="Grandma Rose, 1948-03-14"></textarea>
+      </div>
+      <button class="btn small secondary" id="mhEcAddBulk">Add from list</button>
+    </div>
+  `;
+
+  $('mhSaveBtn').onclick = async () => {
+    await updateDoc(doc(db, 'households', hh.id), {
+      name: $('mhName').value.trim() || hh.name,
+      phone: $('mhPhone').value.trim(),
+      address: $('mhAddress').value.trim(),
+      anniversary: $('mhAnniversary').value || null,
+      responderId: $('mhResponder').value || hh.responderId
+    });
+  };
+  body.querySelectorAll('.mhDelBtn').forEach(btn => {
+    btn.onclick = async () => {
+      const updated = (hh.extraContacts || []).filter(ec => ec.id !== btn.dataset.id);
+      await updateDoc(doc(db, 'households', hh.id), { extraContacts: updated });
+    };
+  });
+  body.querySelectorAll('.mhDeceasedBtn').forEach(btn => {
+    btn.onclick = async () => {
+      const updated = (hh.extraContacts || []).map(ec => ec.id === btn.dataset.id ? { ...ec, deceased: !ec.deceased } : ec);
+      await updateDoc(doc(db, 'households', hh.id), { extraContacts: updated });
+    };
+  });
+  body.querySelectorAll('.mhEditBtn').forEach(btn => {
+    btn.onclick = () => { myHouseholdEcState[btn.dataset.id] = 'edit'; renderMyHousehold(); };
+  });
+  body.querySelectorAll('.mhCancelEdit').forEach(btn => {
+    btn.onclick = () => { delete myHouseholdEcState[btn.dataset.id]; renderMyHousehold(); };
+  });
+  body.querySelectorAll('.mhSaveEdit').forEach(btn => {
+    btn.onclick = async () => {
+      const form = body.querySelector(`[data-ecid="${btn.dataset.id}"]`);
+      const updated = (hh.extraContacts || []).map(ec => ec.id !== btn.dataset.id ? ec : {
+        ...ec,
+        name: form.querySelector('.mhEditName').value.trim() || ec.name,
+        birthdate: form.querySelector('.mhEditBirthdate').value || null,
+        phone: form.querySelector('.mhEditPhone').value.trim(),
+        email: form.querySelector('.mhEditEmail').value.trim()
+      });
+      await updateDoc(doc(db, 'households', hh.id), { extraContacts: updated });
+      delete myHouseholdEcState[btn.dataset.id];
+    };
+  });
+  $('mhEcAddOne').onclick = async () => {
+    const name = $('mhEcName').value.trim();
+    if (!name) return;
+    const entry = {
+      id: crypto.randomUUID(), name,
+      birthdate: $('mhEcBirthdate').value || null,
+      phone: $('mhEcPhone').value.trim(),
+      email: $('mhEcEmail').value.trim()
+    };
+    await updateDoc(doc(db, 'households', hh.id), { extraContacts: [...(hh.extraContacts || []), entry] });
+    $('mhEcName').value = ''; $('mhEcBirthdate').value = ''; $('mhEcPhone').value = ''; $('mhEcEmail').value = '';
+  };
+  $('mhEcAddBulk').onclick = async () => {
+    const lines = $('mhEcBulk').value.split('\n').map(l => l.trim()).filter(Boolean);
+    const newEntries = lines.map(line => {
+      const [name, birthdate, phone, email] = line.split(',').map(p => (p || '').trim());
+      return name ? { id: crypto.randomUUID(), name, birthdate: birthdate || null, phone: phone || '', email: email || '' } : null;
+    }).filter(Boolean);
+    if (!newEntries.length) return;
+    await updateDoc(doc(db, 'households', hh.id), { extraContacts: [...(hh.extraContacts || []), ...newEntries] });
+    $('mhEcBulk').value = '';
+  };
 }
 
 // ---------- Photos / Albums ----------
@@ -934,6 +1070,7 @@ function initHouseholds() {
     households.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
     myHouseholdDoc = myDoc.householdId ? (householdsById[myDoc.householdId] || null) : null;
     renderContacts();
+    renderMyHousehold();
     renderChannelList();
     if (myDoc.role === 'admin') renderHouseholdsAdmin();
   });
