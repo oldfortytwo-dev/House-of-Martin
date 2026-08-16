@@ -121,8 +121,14 @@ suspecting the boolean logic.
   per-document-filter a broad `collection(db,'events')` query by a field like this without reworking
   every event query to be provably scoped, which was out of proportion to the ask.
   - `rsvps` subcollection, keyed by member uid: status, submittedBy, name, householdId, viaHousehold
-- **Album** (`albums/{id}`): title, createdBy, visibility, invitedUserIds[] (friends)
+- **Album** (`albums/{id}`): title, createdBy, visibility, invitedUserIds[] (friends). Secondary to
+  the Wall now — curated collections, reachable via Photos/Wall tab → "Show organized albums."
   - `photos` subcollection: url, storagePath, uploaderId, uploaderName, createdAt
+- **Post** (`posts/{id}`): text, photoUrl, photoStoragePath (both null if text-only), authorId,
+  authorName, createdAt. The Family Wall (Photos tab, now labeled 🧱 Wall in nav) — direct
+  text+photo posting to a family-wide feed, no album required. This is the primary photo-sharing
+  path now; Albums are secondary/curated. Family-wide only for now, no per-post audience
+  targeting yet (a natural extension of the picker already built for Events, not yet wired up here).
 - **DigestSubmission** (`digestSubmissions/{id}`): text, submittedBy, submittedByName,
   includedInDigestAt (null until a real — not test — digest send marks it, via Admin SDK which
   bypasses rules). Any approved member can add one from Events tab → "Add to This Week's Family Email."
