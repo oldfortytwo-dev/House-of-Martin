@@ -129,6 +129,28 @@
   body[data-theme="command"] .wallLogLine .thumb { width: 32px; height: 32px; object-fit: cover; border-radius: 2px; cursor: pointer; flex-shrink: 0; }
   body[data-theme="command"] .wallLogLine .wallDel { flex-shrink: 0; }
 
+  /* Rasta: tricolor accent stripe, warm relaxed rounded chrome */
+  body[data-theme="rasta"] .card { border-top: 4px solid; border-image: linear-gradient(90deg, #c0392b, #e8b923, #1e7d32) 1; }
+  body[data-theme="rasta"] .btn { border-radius: 999px; }
+  body[data-theme="rasta"] header.topbar h2::before { content: '🦁 '; }
+
+  /* Instagram Grid Wall: an actual photo grid (like a real IG profile), not a list of cards */
+  .wallGrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px; }
+  .wallGridTile { position: relative; aspect-ratio: 1; overflow: hidden; background: var(--accent-soft); }
+  .wallGridTile img { width: 100%; height: 100%; object-fit: cover; cursor: pointer; display: block; }
+  .wallGridQuote { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; padding: 8px; font-size: 10px; text-align: center; font-style: italic; }
+  .wallGridTile .wallDel { position: absolute; top: 2px; right: 2px; background: rgba(0,0,0,.55); color: #fff; border-radius: 50%; width: 18px; height: 18px; font-size: 10px; }
+
+  /* Retro Photo Album Wall: a scrapbook page of tilted polaroid-caption tiles */
+  .wallAlbumGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .wallAlbumTile { background: var(--card); border: 1px solid var(--border); padding: 8px 8px 12px; position: relative; box-shadow: 2px 3px 8px rgba(0,0,0,.2); }
+  .wallAlbumTile.tiltL { transform: rotate(-2deg); }
+  .wallAlbumTile.tiltR { transform: rotate(2deg); }
+  .wallAlbumTile img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; cursor: pointer; }
+  .wallAlbumNoPhoto { width: 100%; aspect-ratio: 1; display: flex; align-items: center; justify-content: center; font-size: 32px; background: var(--accent-soft); }
+  .wallAlbumTile .cap { font-size: 12px; margin-top: 6px; text-align: center; }
+  .wallAlbumTile .wallDel { position: absolute; top: 2px; right: 2px; }
+
   /* ---- Header banner ---- */
   #bannerHeader { display: none; width: 100%; height: 120px; background-size: cover; background-position: center; }
   #bannerHeader.show { display: block; }
@@ -722,6 +744,7 @@ const THEME_PRESETS = {
   nature:   { id: 'nature', name: 'Nature / Botanical', vars: { bg:'#eef3e6', card:'#ffffff', ink:'#2f3d26', inkSoft:'#6b7a5e', accent:'#5b8c3e', accentSoft:'#dcebc9', border:'#c7dab0', radius:'16', fontHeading:SYSTEM_FONT, fontBody:SYSTEM_FONT }, anim:'subtle' },
   neon:     { id: 'neon', name: 'Holographic / Neon', vars: { bg:'#0a0118', card:'#1e0f3c', ink:'#f0e6ff', inkSoft:'#b39ddb', accent:'#ff4ecd', accentSoft:'#3d1a5c', border:'#5a2d8c', radius:'16', fontHeading:"'Playfair Display', serif", fontBody:SYSTEM_FONT }, anim:'aurora' },
   command:  { id: 'command', name: 'Command Center', vars: { bg:'#12141a', card:'#1a1d26', ink:'#e4e6ec', inkSoft:'#8b909e', accent:'#3ba7ff', accentSoft:'#1a2c42', border:'#2a2d38', radius:'4', fontHeading:"'JetBrains Mono', monospace", fontBody:"'JetBrains Mono', monospace" }, anim:'none' },
+  rasta:    { id: 'rasta', name: 'Rasta', vars: { bg:'#0d1f0f', card:'#182b1a', ink:'#f5efe0', inkSoft:'#a8b8a0', accent:'#e8b923', accentSoft:'#3a3312', border:'#c0392b', radius:'18', fontHeading:"'Fredoka', sans-serif", fontBody:SYSTEM_FONT }, anim:'subtle' },
 };
 let customThemes = [];
 let familyDefaultThemeId = 'classic';
@@ -1476,6 +1499,48 @@ function renderWallFeed(snap) {
         log.appendChild(line);
       });
       wrap.appendChild(log);
+      return;
+    }
+
+    if (activeThemeId === 'igGrid') {
+      const grid = document.createElement('div');
+      grid.className = 'wallGrid';
+      snap.forEach(d => {
+        const p = d.data();
+        const canDelete = p.authorId === currentUser.uid || myDoc.role === 'admin';
+        const tile = document.createElement('div');
+        tile.className = 'wallGridTile';
+        tile.innerHTML = p.photoUrl
+          ? `<img src="${p.photoUrl}" alt="">${canDelete ? '<button class="editBtn wallDel">✕</button>' : ''}`
+          : `<div class="wallGridQuote">"${escapeHtml(p.text || '')}"<br><span class="hh">— ${escapeHtml(p.authorName || '')}</span></div>${canDelete ? '<button class="editBtn wallDel">✕</button>' : ''}`;
+        if (p.photoUrl) tile.querySelector('img').onclick = () => window.open(p.photoUrl, '_blank');
+        if (canDelete) tile.querySelector('.wallDel').onclick = wallDeleteHandler(d.id, p.photoStoragePath);
+        grid.appendChild(tile);
+      });
+      wrap.appendChild(grid);
+      return;
+    }
+
+    if (activeThemeId === 'retro') {
+      const grid = document.createElement('div');
+      grid.className = 'wallAlbumGrid';
+      let i = 0;
+      snap.forEach(d => {
+        const p = d.data();
+        const canDelete = p.authorId === currentUser.uid || myDoc.role === 'admin';
+        const tile = document.createElement('div');
+        tile.className = 'wallAlbumTile ' + (i % 2 === 0 ? 'tiltL' : 'tiltR');
+        i++;
+        tile.innerHTML = `
+          ${p.photoUrl ? `<img src="${p.photoUrl}" alt="">` : `<div class="wallAlbumNoPhoto">📝</div>`}
+          <div class="cap">${escapeHtml(p.text || '')}<br><span class="hh">— ${escapeHtml(p.authorName || '')}</span></div>
+          ${canDelete ? `<button class="editBtn wallDel">✕</button>` : ''}
+        `;
+        if (p.photoUrl) tile.querySelector('img').onclick = () => window.open(p.photoUrl, '_blank');
+        if (canDelete) tile.querySelector('.wallDel').onclick = wallDeleteHandler(d.id, p.photoStoragePath);
+        grid.appendChild(tile);
+      });
+      wrap.appendChild(grid);
       return;
     }
 
