@@ -121,6 +121,12 @@ suspecting the boolean logic.
   per-document-filter a broad `collection(db,'events')` query by a field like this without reworking
   every event query to be provably scoped, which was out of proportion to the ask.
   - `rsvps` subcollection, keyed by member uid: status, submittedBy, name, householdId, viaHousehold
+  - `signups` subcollection (potluck-style items): item, addedBy, addedByName, claimedBy (null if
+    unclaimed), claimedByName, createdAt. Any approved member/invited friend can suggest an item and
+    optionally self-claim it immediately; anyone can claim an unclaimed item or release their own
+    claim (never someone else's); delete is allowed for the adder, the current claimer, or an admin
+    — the adder keeps delete rights even after someone else claims it, so a suggestion can always be
+    retracted by whoever proposed it.
 - **Album** (`albums/{id}`): title, createdBy, visibility, invitedUserIds[] (friends). Secondary to
   the Wall now — curated collections, reachable via Photos/Wall tab → "Show organized albums."
   - `photos` subcollection: url, storagePath, uploaderId, uploaderName, createdAt
@@ -294,10 +300,11 @@ household stay admin-only since those touch documents the responder doesn't
 own), DM channels (genuinely private, not just UI-hidden — see the Firestore
 rules gotcha above), weekly digest email (Cloud Functions — see section above),
 multi-admin role management, admin Dashboard (live counts + estimated costs),
-10-preset theme system with personal/family-default resolution, admin custom
-theme editor, and header banner photo (see "Theme System" section above).
+11-preset theme system with personal/family-default resolution, admin custom
+theme editor, header banner photo filmstrip, and potluck-style event sign-up
+lists (see "Theme System" section above and Data Model below).
 
-**Deferred:** family tree view, item sign-up lists, native app wrapper,
+**Deferred:** family tree view, native app wrapper,
 deactivating a real account holder's login (vs. the deceased-toggle already
 built for no-account extraContacts), functional Wall reactions/comments (Facebook
 Blue's Like/Comment/Share row is decorative only — no `likedBy` field or comments
