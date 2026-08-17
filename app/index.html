@@ -1704,12 +1704,13 @@ function renderWallFeed(snap) {
         const canDelete = p.authorId === currentUser.uid || myDoc.role === 'admin';
         const when = p.createdAt && p.createdAt.toDate ? p.createdAt.toDate().toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '';
         const text = p.text || '';
+        const dropChar = (p.authorName || '').trim()[0] || '·';
         const entry = document.createElement('div');
         entry.className = 'wallGbEntry';
         entry.innerHTML = `
           ${canDelete ? `<button class="editBtn wallDel">✕</button>` : ''}
-          ${text ? `<span class="dropcap">${escapeHtml(text[0])}</span>` : ''}
-          <div class="txt"><span class="who">${escapeHtml(p.authorName || '')}</span> — ${escapeHtml(text.slice(1))}</div>
+          <span class="dropcap">${escapeHtml(dropChar)}</span>
+          <div class="txt"><span class="who">${escapeHtml(p.authorName || '')}</span>${text ? ' — ' + escapeHtml(text) : ''}</div>
           <div class="when">${when}</div>
           ${p.photoUrl ? `<img src="${p.photoUrl}" alt="">` : ''}
         `;
