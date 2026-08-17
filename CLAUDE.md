@@ -231,6 +231,14 @@ time; retrying after enabling it works immediately, no propagation delay observe
 - `weeklyDigest`: scheduled, Mondays 8am America/New_York. Emails every approved member —
   upcoming birthdays/anniversaries (next 7 days, from `occasions`), upcoming events (next 7
   days), and any open `digestSubmissions` (marked included after sending).
+  **Gated by `config/appearance.digestEnabled` — strict opt-in, defaults to paused.** The
+  schedule fires unconditionally every Monday regardless of whether anyone's configured
+  anything; the function checks this field and no-ops unless it's explicitly `true` (missing
+  field or `false` both mean paused). This exists because the feature almost emailed the whole
+  family mid-testing — the Monday after it was built arrived before the admin had touched the
+  toggle. `sendDigestNow` (test sends and the manual real-send button) is **not** gated by this;
+  those are already explicit admin actions. Admin tab has a checkbox reflecting/writing this
+  field live.
 - `sendDigestNow`: admin-only callable (checks the caller's Firestore `users/{uid}` doc — Admin
   SDK bypasses `firestore.rules` entirely, so this check is manual, not automatic). Accepts an
   optional `{ testEmails: [...] }` — when present, sends only to those addresses instead of the
