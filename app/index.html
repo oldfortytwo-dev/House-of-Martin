@@ -491,8 +491,13 @@
         </div>
         <div class="card">
           <h3 style="margin-top:0">📧 Weekly Digest Email</h3>
-          <p class="hh">Sends automatically every Monday 8am (ET) — upcoming birthdays/anniversaries,
-            upcoming events, and anything queued from the Events tab's "Add to This Week's Family Email."</p>
+          <p class="hh">When enabled, sends automatically every Monday 8am (ET) — upcoming
+            birthdays/anniversaries, upcoming events, and anything queued from the Events tab's
+            "Add to This Week's Family Email."</p>
+          <label class="chk" style="font-size:14px; font-weight:600">
+            <input type="checkbox" id="digestEnabledToggle"> Enable automatic Monday send
+          </label>
+          <div class="hh" id="digestEnabledStatus" style="margin:4px 0 12px"></div>
           <div class="field"><label>Test email(s) — comma-separated, doesn't touch the real family list or mark submissions as sent</label>
             <input type="text" id="digestTestEmails" placeholder="you@example.com, dad@example.com">
           </div>
@@ -2779,8 +2784,20 @@ function initAppearance() {
     updateBannerDisplay();
     renderBannerPhotoList();
     if ($('themeModalBg').classList.contains('open')) renderThemeGrid();
+
+    const enabled = data.digestEnabled === true;
+    if ($('digestEnabledToggle')) $('digestEnabledToggle').checked = enabled;
+    if ($('digestEnabledStatus')) {
+      $('digestEnabledStatus').textContent = enabled
+        ? 'Automatic Monday send is ON.'
+        : 'Automatic Monday send is OFF — paused (this is the default until an admin turns it on).';
+    }
   });
 }
+
+$('digestEnabledToggle').addEventListener('change', async (e) => {
+  await setDoc(doc(db, 'config', 'appearance'), { digestEnabled: e.target.checked }, { merge: true });
+});
 
 function updateBannerDisplay() {
   const el = $('bannerHeader');

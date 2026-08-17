@@ -141,6 +141,14 @@ exports.weeklyDigest = onSchedule({
   timeZone: 'America/New_York',
   secrets: [GMAIL_USER, GMAIL_APP_PASSWORD]
 }, async () => {
+  // Strict opt-in: only sends if config/appearance.digestEnabled is explicitly true.
+  // Defaults to paused (missing field, or false) — a family shouldn't get emailed
+  // just because nobody got around to flipping a switch yet.
+  const cfg = await db.collection('config').doc('appearance').get();
+  if (!cfg.exists || cfg.data().digestEnabled !== true) {
+    console.log('Weekly digest is paused (digestEnabled is not true) — skipping scheduled send.');
+    return;
+  }
   await sendDigest(GMAIL_USER.value(), GMAIL_APP_PASSWORD.value());
 });
 
