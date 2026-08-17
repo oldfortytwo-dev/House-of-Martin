@@ -159,9 +159,8 @@ Applied once immediately at script load — before Firebase auth even resolves �
 member's sign-in screen matches what they last picked on that device, not a flash of default
 then a swap.
 
-**Three themes get real structural divergence, not just decoration** — `renderWallFeed()`
-(app/index.html) branches on `activeThemeId` for actual rendering logic, not just CSS, currently
-for:
+**Every preset gets real structural divergence, not just decoration** — `renderWallFeed()`
+(app/index.html) branches on `activeThemeId` for actual rendering logic, not just CSS:
 - `command`: compact terminal-style log (`.wallLog`/`.wallLogLine`, `[HH:MM] AUTHOR: text`)
   instead of Facebook-style `.wallPost` cards; nav labels also lose their emoji for bracket-style
   `[tabname]` via a `<span class="lbl">` wrapper + `::before`/`::after`.
@@ -169,13 +168,29 @@ for:
   Instagram profile — text-only posts become a small italic quote tile in the same grid.
 - `retro`: a 2-column scrapbook page (`.wallAlbumGrid`/`.wallAlbumTile`) — tilted
   polaroid-style tiles (alternating rotation) with a caption below each photo.
+- `fbBlue`: profile-style post — avatar-initials circle, name/time header row, decorative
+  Like/Comment/Share action row (visual only, not functional reactions — see "Deferred" below).
+- `kraft`: corkboard of pinned index cards (`.wallCorkboard`/`.wallPinTile`), varied rotation via
+  a 3-value rotation-class cycle, 📌 pin decoration.
+- `midnight`: quiet elegant guestbook (`.wallGuestbook`) — no card boxes, a drop-cap first letter
+  per entry, gold hairline dividers between posts.
+- `pastel`: playful 2-column sticker masonry (`.wallStickerGrid`, CSS `columns:2`), bubble-shaped
+  asymmetric-radius tiles.
+- `nature`: vertical growth timeline (`.wallTimeline`) — a connecting line down the left edge,
+  🌿 leaf marker per entry.
+- `neon`: 2-column trading-card gallery (`.wallNeonGrid`) — reuses the plain card markup via
+  `buildDefaultWallCard()`, just wrapped in a grid instead of a single column, so Neon's existing
+  glass/gradient-border `.card` CSS (see per-theme signature treatments) does the visual work.
+- `classic` (and any custom admin-built theme): the original single-column `.wallPost` card list,
+  via `buildDefaultWallCard()`.
 
 This was the direct answer to "themes still feel vanilla, make the non-Facebook end genuinely
-different, then extend the pattern." The remaining presets are still CSS-only. To extend this to
-another theme: keep the Firestore query/rules/compose logic identical (all three branches share
-`wallDeleteHandler()` for delete+Storage-cleanup so that logic is only written once), branch only
-`renderWallFeed()`, and rely on the cached last snapshot (`_lastWallSnap`) so switching themes
-mid-view re-renders immediately instead of waiting for the next Firestore update.
+different, then extend the pattern to the rest." To add another *new* preset with its own Wall
+layout: keep the Firestore query/rules/compose logic identical — every branch shares
+`wallDeleteHandler()` for delete+Storage-cleanup and `buildDefaultWallCard()` for the plain-card
+shape where a theme just wants a grid wrapper around it — branch only `renderWallFeed()`, and rely
+on the cached last snapshot (`_lastWallSnap`) so switching themes mid-view re-renders immediately
+instead of waiting for the next Firestore update.
 
 **Custom editor** (admin-only, 🎨 button in the header → "Build a custom theme"): 4 color pickers
 (bg/card/ink/accent) + corner-style/heading-font/animation dropdowns. The 3 remaining tokens
@@ -284,7 +299,9 @@ theme editor, and header banner photo (see "Theme System" section above).
 
 **Deferred:** family tree view, item sign-up lists, native app wrapper,
 deactivating a real account holder's login (vs. the deceased-toggle already
-built for no-account extraContacts).
+built for no-account extraContacts), functional Wall reactions/comments (Facebook
+Blue's Like/Comment/Share row is decorative only — no `likedBy` field or comments
+subcollection exists yet).
 
 ## Working Style / Preferences
 
