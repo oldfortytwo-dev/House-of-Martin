@@ -151,6 +151,47 @@
   .wallAlbumTile .cap { font-size: 12px; margin-top: 6px; text-align: center; }
   .wallAlbumTile .wallDel { position: absolute; top: 2px; right: 2px; }
 
+  /* Facebook Blue Wall: profile-style post — avatar, name/time header, action row */
+  .fbPost .fbHead { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .fbAvatar { width: 36px; height: 36px; border-radius: 50%; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; flex-shrink: 0; }
+  .fbActions { display: flex; gap: 18px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); font-size: 13px; color: var(--ink-soft); font-weight: 600; }
+
+  /* Kraft & Twine Wall: corkboard of pinned index cards, varied tilt */
+  .wallCorkboard { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; padding: 6px; }
+  .wallPinTile { background: var(--card); border: 1px solid var(--border); padding: 14px 10px 10px; position: relative; box-shadow: 2px 4px 9px rgba(40,25,10,.2); }
+  .wallPinTile::before { content: '📌'; position: absolute; top: -12px; left: 50%; transform: translateX(-50%); font-size: 16px; }
+  .wallPinTile.rotA { transform: rotate(-3deg); } .wallPinTile.rotB { transform: rotate(2deg); } .wallPinTile.rotC { transform: rotate(-1deg); }
+  .wallPinTile img { width: 100%; aspect-ratio: 4/3; object-fit: cover; display: block; cursor: pointer; margin-bottom: 6px; }
+  .wallPinTile .cap { font-size: 12px; }
+  .wallPinTile .wallDel { position: absolute; top: 4px; right: 4px; }
+
+  /* Midnight Family Wall: quiet elegant guestbook, no card boxes, gold dividers */
+  .wallGuestbook .wallGbEntry { padding: 14px 0; border-bottom: 1px solid var(--border); position: relative; }
+  .wallGuestbook .wallGbEntry:last-child { border-bottom: none; }
+  .wallGuestbook .dropcap { float: left; font-family: var(--font-heading); font-size: 34px; line-height: 30px; padding: 2px 8px 0 0; color: var(--accent); }
+  .wallGuestbook .who { font-family: var(--font-heading); color: var(--accent); }
+  .wallGuestbook .txt { overflow: hidden; }
+  .wallGuestbook img { width: 100%; margin-top: 8px; border-radius: 4px; cursor: pointer; clear: both; }
+  .wallGuestbook .wallDel { float: right; }
+
+  /* Pastel Nursery Wall: playful sticker masonry, bubble tiles */
+  .wallStickerGrid { columns: 2; column-gap: 10px; }
+  .wallStickerTile { break-inside: avoid; margin-bottom: 10px; background: var(--card); border-radius: 26px 10px 26px 10px; padding: 12px; box-shadow: 0 3px 8px rgba(0,0,0,.08); position: relative; }
+  .wallStickerTile img { width: 100%; border-radius: 16px 6px 16px 6px; display: block; cursor: pointer; margin-bottom: 6px; }
+  .wallStickerTile .wallDel { position: absolute; top: 6px; right: 6px; }
+
+  /* Nature/Botanical Wall: vertical growth timeline, leaf markers */
+  .wallTimeline { position: relative; padding-left: 26px; }
+  .wallTimeline::before { content: ''; position: absolute; left: 9px; top: 4px; bottom: 4px; width: 2px; background: var(--accent); opacity: .5; }
+  .wallTimelineItem { position: relative; margin-bottom: 16px; background: var(--card); border-radius: 6px 20px 6px 20px; padding: 10px 12px; border-left: 3px solid var(--accent); }
+  .wallTimelineItem::before { content: '🌿'; position: absolute; left: -27px; top: 8px; font-size: 15px; }
+  .wallTimelineItem img { width: 100%; border-radius: 4px 16px 4px 16px; margin-top: 6px; cursor: pointer; display: block; }
+  .wallTimelineItem .wallDel { float: right; }
+
+  /* Holographic/Neon Wall: 2-col trading-card gallery (reuses the glass .card styling) */
+  .wallNeonGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .wallNeonGrid .wallPost { margin-bottom: 0; }
+
   /* ---- Header banner: filmstrip of a few photos, each a fixed-height cover-crop tile
      so mismatched source aspect ratios never stretch or distort ---- */
   #bannerHeader { display: none; width: 100%; overflow-x: auto; overflow-y: hidden; gap: 3px; scroll-snap-type: x proximity; -webkit-overflow-scrolling: touch; }
@@ -1551,23 +1592,149 @@ function renderWallFeed(snap) {
       return;
     }
 
-    snap.forEach(d => {
-      const p = d.data();
-      const canDelete = p.authorId === currentUser.uid || myDoc.role === 'admin';
-      const when = p.createdAt && p.createdAt.toDate ? p.createdAt.toDate().toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '';
-      const card = document.createElement('div');
-      card.className = 'card wallPost';
-      card.innerHTML = `
-        ${canDelete ? `<button class="editBtn wallDel" data-id="${d.id}">✕</button>` : ''}
-        <div class="who">${escapeHtml(p.authorName || '')}</div>
-        <div class="when">${when}${p.audience && p.audience !== 'everyone' ? ' · Posted to: ' + escapeHtml(describeAudience(p)) : ''}</div>
-        ${p.text ? `<div class="txt">${escapeHtml(p.text)}</div>` : ''}
-        ${p.photoUrl ? `<img src="${p.photoUrl}" alt="">` : ''}
-      `;
-      if (p.photoUrl) card.querySelector('img').onclick = () => window.open(p.photoUrl, '_blank');
-      if (canDelete) card.querySelector('.wallDel').onclick = wallDeleteHandler(d.id, p.photoStoragePath);
-      wrap.appendChild(card);
-    });
+    if (activeThemeId === 'fbBlue') {
+      snap.forEach(d => {
+        const p = d.data();
+        const canDelete = p.authorId === currentUser.uid || myDoc.role === 'admin';
+        const when = p.createdAt && p.createdAt.toDate ? p.createdAt.toDate().toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '';
+        const initials = (p.authorName || '?').trim().split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase();
+        const card = document.createElement('div');
+        card.className = 'card wallPost fbPost';
+        card.innerHTML = `
+          ${canDelete ? `<button class="editBtn wallDel" data-id="${d.id}">✕</button>` : ''}
+          <div class="fbHead"><div class="fbAvatar">${escapeHtml(initials)}</div>
+            <div><div class="who">${escapeHtml(p.authorName || '')}</div><div class="when">${when}${p.audience && p.audience !== 'everyone' ? ' · ' + escapeHtml(describeAudience(p)) : ''}</div></div>
+          </div>
+          ${p.text ? `<div class="txt">${escapeHtml(p.text)}</div>` : ''}
+          ${p.photoUrl ? `<img src="${p.photoUrl}" alt="">` : ''}
+          <div class="fbActions"><span>👍 Like</span><span>💬 Comment</span><span>↗ Share</span></div>
+        `;
+        if (p.photoUrl) card.querySelector('img').onclick = () => window.open(p.photoUrl, '_blank');
+        if (canDelete) card.querySelector('.wallDel').onclick = wallDeleteHandler(d.id, p.photoStoragePath);
+        wrap.appendChild(card);
+      });
+      return;
+    }
+
+    if (activeThemeId === 'kraft') {
+      const board = document.createElement('div');
+      board.className = 'wallCorkboard';
+      const rots = ['rotA', 'rotB', 'rotC'];
+      let i = 0;
+      snap.forEach(d => {
+        const p = d.data();
+        const canDelete = p.authorId === currentUser.uid || myDoc.role === 'admin';
+        const tile = document.createElement('div');
+        tile.className = 'wallPinTile ' + rots[i % 3]; i++;
+        tile.innerHTML = `
+          ${p.photoUrl ? `<img src="${p.photoUrl}" alt="">` : ''}
+          <div class="cap">${escapeHtml(p.text || '')}<br><span class="hh">— ${escapeHtml(p.authorName || '')}</span></div>
+          ${canDelete ? `<button class="editBtn wallDel">✕</button>` : ''}
+        `;
+        if (p.photoUrl) tile.querySelector('img').onclick = () => window.open(p.photoUrl, '_blank');
+        if (canDelete) tile.querySelector('.wallDel').onclick = wallDeleteHandler(d.id, p.photoStoragePath);
+        board.appendChild(tile);
+      });
+      wrap.appendChild(board);
+      return;
+    }
+
+    if (activeThemeId === 'midnight') {
+      const list = document.createElement('div');
+      list.className = 'wallGuestbook';
+      snap.forEach(d => {
+        const p = d.data();
+        const canDelete = p.authorId === currentUser.uid || myDoc.role === 'admin';
+        const when = p.createdAt && p.createdAt.toDate ? p.createdAt.toDate().toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '';
+        const text = p.text || '';
+        const entry = document.createElement('div');
+        entry.className = 'wallGbEntry';
+        entry.innerHTML = `
+          ${canDelete ? `<button class="editBtn wallDel">✕</button>` : ''}
+          ${text ? `<span class="dropcap">${escapeHtml(text[0])}</span>` : ''}
+          <div class="txt"><span class="who">${escapeHtml(p.authorName || '')}</span> — ${escapeHtml(text.slice(1))}</div>
+          <div class="when">${when}</div>
+          ${p.photoUrl ? `<img src="${p.photoUrl}" alt="">` : ''}
+        `;
+        if (p.photoUrl) entry.querySelector('img').onclick = () => window.open(p.photoUrl, '_blank');
+        if (canDelete) entry.querySelector('.wallDel').onclick = wallDeleteHandler(d.id, p.photoStoragePath);
+        list.appendChild(entry);
+      });
+      wrap.appendChild(list);
+      return;
+    }
+
+    if (activeThemeId === 'pastel') {
+      const grid = document.createElement('div');
+      grid.className = 'wallStickerGrid';
+      snap.forEach(d => {
+        const p = d.data();
+        const canDelete = p.authorId === currentUser.uid || myDoc.role === 'admin';
+        const tile = document.createElement('div');
+        tile.className = 'wallStickerTile';
+        tile.innerHTML = `
+          ${canDelete ? `<button class="editBtn wallDel">✕</button>` : ''}
+          ${p.photoUrl ? `<img src="${p.photoUrl}" alt="">` : ''}
+          <div class="txt">${escapeHtml(p.text || '')}</div>
+          <div class="hh">${escapeHtml(p.authorName || '')}</div>
+        `;
+        if (p.photoUrl) tile.querySelector('img').onclick = () => window.open(p.photoUrl, '_blank');
+        if (canDelete) tile.querySelector('.wallDel').onclick = wallDeleteHandler(d.id, p.photoStoragePath);
+        grid.appendChild(tile);
+      });
+      wrap.appendChild(grid);
+      return;
+    }
+
+    if (activeThemeId === 'nature') {
+      const tl = document.createElement('div');
+      tl.className = 'wallTimeline';
+      snap.forEach(d => {
+        const p = d.data();
+        const canDelete = p.authorId === currentUser.uid || myDoc.role === 'admin';
+        const when = p.createdAt && p.createdAt.toDate ? p.createdAt.toDate().toLocaleDateString([], { month: 'short', day: 'numeric' }) : '';
+        const item = document.createElement('div');
+        item.className = 'wallTimelineItem';
+        item.innerHTML = `
+          ${canDelete ? `<button class="editBtn wallDel">✕</button>` : ''}
+          <span class="who">${escapeHtml(p.authorName || '')}</span> <span class="hh">${when}</span>
+          ${p.text ? `<div class="txt">${escapeHtml(p.text)}</div>` : ''}
+          ${p.photoUrl ? `<img src="${p.photoUrl}" alt="">` : ''}
+        `;
+        if (p.photoUrl) item.querySelector('img').onclick = () => window.open(p.photoUrl, '_blank');
+        if (canDelete) item.querySelector('.wallDel').onclick = wallDeleteHandler(d.id, p.photoStoragePath);
+        tl.appendChild(item);
+      });
+      wrap.appendChild(tl);
+      return;
+    }
+
+    if (activeThemeId === 'neon') {
+      const grid = document.createElement('div');
+      grid.className = 'wallNeonGrid';
+      snap.forEach(d => grid.appendChild(buildDefaultWallCard(d.id, d.data())));
+      wrap.appendChild(grid);
+      return;
+    }
+
+    snap.forEach(d => wrap.appendChild(buildDefaultWallCard(d.id, d.data())));
+}
+
+function buildDefaultWallCard(id, p) {
+  const canDelete = p.authorId === currentUser.uid || myDoc.role === 'admin';
+  const when = p.createdAt && p.createdAt.toDate ? p.createdAt.toDate().toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '';
+  const card = document.createElement('div');
+  card.className = 'card wallPost';
+  card.innerHTML = `
+    ${canDelete ? `<button class="editBtn wallDel" data-id="${id}">✕</button>` : ''}
+    <div class="who">${escapeHtml(p.authorName || '')}</div>
+    <div class="when">${when}${p.audience && p.audience !== 'everyone' ? ' · Posted to: ' + escapeHtml(describeAudience(p)) : ''}</div>
+    ${p.text ? `<div class="txt">${escapeHtml(p.text)}</div>` : ''}
+    ${p.photoUrl ? `<img src="${p.photoUrl}" alt="">` : ''}
+  `;
+  if (p.photoUrl) card.querySelector('img').onclick = () => window.open(p.photoUrl, '_blank');
+  if (canDelete) card.querySelector('.wallDel').onclick = wallDeleteHandler(id, p.photoStoragePath);
+  return card;
 }
 
 $('wallAddPhotoBtn').onclick = () => $('wallPhotoInput').click();
