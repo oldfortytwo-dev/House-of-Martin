@@ -308,7 +308,9 @@ lists (see "Theme System" section above and Data Model below).
 deactivating a real account holder's login (vs. the deceased-toggle already
 built for no-account extraContacts), functional Wall reactions/comments (Facebook
 Blue's Like/Comment/Share row is decorative only — no `likedBy` field or comments
-subcollection exists yet).
+subcollection exists yet), profile pictures (members currently only get initials
+avatars on Facebook Blue's Wall posts — no photo-upload field on the user doc,
+no avatar shown anywhere else in the app: Contacts rows, DMs, other Wall themes).
 
 ## Working Style / Preferences
 
