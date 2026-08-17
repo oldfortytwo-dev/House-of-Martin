@@ -1216,6 +1216,16 @@ function renderEventCard(id, ev, container) {
       </div>
     </div>` : ''}
     <div class="rsvpCount" id="rc-${id}"></div>
+
+    <div class="ecSection">
+      <div class="nm" style="font-size:13px">🍽 Who's bringing what</div>
+      <div id="signups-${id}" style="margin-top:6px"></div>
+      <div style="display:flex; gap:6px; margin-top:8px; flex-wrap:wrap">
+        <input type="text" class="signupItemInput" placeholder="e.g. Potato salad" style="flex:1; min-width:120px; padding:9px 12px; border:1px solid var(--border); border-radius:8px">
+        <label class="chk" style="flex-shrink:0"><input type="checkbox" class="signupClaimSelf" checked> I'll bring this</label>
+        <button class="btn small secondary signupAddBtn" style="width:auto">Add</button>
+      </div>
+    </div>
   `;
   container.appendChild(card);
 
@@ -1246,6 +1256,53 @@ function renderEventCard(id, ev, container) {
     card.querySelectorAll('.rsvpMine button').forEach(b => b.classList.toggle('picked', b.dataset.status === mine));
     const rc = card.querySelector(`#rc-${id}`);
     if (rc) rc.textContent = `${counts.yes} going · ${counts.maybe} maybe · ${counts.no} can't make it`;
+  });
+
+  card.querySelector('.signupAddBtn').onclick = async () => {
+    const input = card.querySelector('.signupItemInput');
+    const item = input.value.trim();
+    if (!item) return;
+    const claimSelf = card.querySelector('.signupClaimSelf').checked;
+    await addDoc(collection(db, 'events', id, 'signups'), {
+      item, addedBy: currentUser.uid, addedByName: myDoc.name,
+      claimedBy: claimSelf ? currentUser.uid : null, claimedByName: claimSelf ? myDoc.name : null,
+      createdAt: serverTimestamp()
+    });
+    input.value = '';
+  };
+  card.querySelector('.signupItemInput').addEventListener('keydown', e => { if (e.key === 'Enter') card.querySelector('.signupAddBtn').click(); });
+
+  onSnapshot(query(collection(db, 'events', id, 'signups'), orderBy('createdAt', 'asc')), (snap) => {
+    const wrap = card.querySelector(`#signups-${id}`);
+    if (!wrap) return;
+    if (snap.empty) { wrap.innerHTML = '<div class="hh">Nothing on the list yet.</div>'; return; }
+    wrap.innerHTML = snap.docs.map(d => {
+      const s = d.data();
+      const mine = s.claimedBy === currentUser.uid;
+      const canDelete = mine || s.addedBy === currentUser.uid || myDoc.role === 'admin';
+      return `
+      <div class="contactRow">
+        <div class="nm">${escapeHtml(s.item)} ${s.claimedBy ? `<span class="hh">— ${escapeHtml(s.claimedByName || '')}</span>` : '<span class="hh">(unclaimed)</span>'}</div>
+        <div style="display:flex; gap:4px; align-items:center">
+          ${!s.claimedBy ? `<button class="btn small secondary signupClaim" data-id="${d.id}" style="width:auto">Claim</button>` : ''}
+          ${mine ? `<button class="btn small secondary signupUnclaim" data-id="${d.id}" style="width:auto">Unclaim</button>` : ''}
+          ${canDelete ? `<button class="editBtn signupDel" data-id="${d.id}">✕</button>` : ''}
+        </div>
+      </div>`;
+    }).join('');
+    wrap.querySelectorAll('.signupClaim').forEach(btn => {
+      btn.onclick = async () => {
+        await updateDoc(doc(db, 'events', id, 'signups', btn.dataset.id), { claimedBy: currentUser.uid, claimedByName: myDoc.name });
+      };
+    });
+    wrap.querySelectorAll('.signupUnclaim').forEach(btn => {
+      btn.onclick = async () => {
+        await updateDoc(doc(db, 'events', id, 'signups', btn.dataset.id), { claimedBy: null, claimedByName: null });
+      };
+    });
+    wrap.querySelectorAll('.signupDel').forEach(btn => {
+      btn.onclick = async () => { await deleteDoc(doc(db, 'events', id, 'signups', btn.dataset.id)); };
+    });
   });
 }
 

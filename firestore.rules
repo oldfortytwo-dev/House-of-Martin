@@ -117,6 +117,24 @@ service cloud.firestore {
         allow write: if (isApprovedMember() || isFriendInvitedTo(eventId, 'events'))
           && request.resource.data.submittedBy == request.auth.uid;
       }
+
+      // Potluck-style sign-up items: anyone can suggest an item (claimed or not),
+      // anyone can claim an unclaimed one or release their own claim, admins can
+      // manage anything, and only the person who added/claimed an item (or an admin)
+      // can delete it.
+      match /signups/{signupId} {
+        allow read: if isApprovedMember() || isFriendInvitedTo(eventId, 'events');
+        allow create: if (isApprovedMember() || isFriendInvitedTo(eventId, 'events'))
+          && request.resource.data.addedBy == request.auth.uid
+          && (request.resource.data.claimedBy == null || request.resource.data.claimedBy == request.auth.uid);
+        allow update: if isAdmin() || (
+          (isApprovedMember() || isFriendInvitedTo(eventId, 'events')) && (
+            (resource.data.claimedBy == null && request.resource.data.claimedBy == request.auth.uid) ||
+            resource.data.claimedBy == request.auth.uid
+          )
+        );
+        allow delete: if isAdmin() || (signedIn() && (resource.data.addedBy == request.auth.uid || resource.data.claimedBy == request.auth.uid));
+      }
     }
 
     match /albums/{albumId} {
