@@ -205,6 +205,21 @@ shape where a theme just wants a grid wrapper around it — branch only `renderW
 on the cached last snapshot (`_lastWallSnap`) so switching themes mid-view re-renders immediately
 instead of waiting for the next Firestore update.
 
+**Like/Comment/Share work identically across all 9 layouts**, not just Facebook Blue — the same
+three shared pieces get dropped into every branch: `reactionsBlockHtml(p)` (compact heart+count,
+💬 toggle, 🔗 share — used by the 7 space-constrained layouts) or the labeled `.fbActions` markup
+(Facebook Blue and the default/Neon card) for the HTML, and `wireLikeAndComments(container, id, p)`
+to wire it up afterward (finds `.wallLikeBtn`/`.wallCommentToggle`/`.wallPostShareBtn`/
+`.wallCommentSection` by class within whatever `container` you pass it — a tile, a card, a log-line
+wrapper, doesn't matter). Comments are lazy-subscribed only when a viewer actually expands a post's
+comment section, not eagerly for every post in the feed. Two layouts needed structural adjustment
+to make room: `command`'s log-line got wrapped in a `.wallLogEntry` div per entry (the comment
+section needs a block-level home to expand into, and `:last-child` border-removal had to move from
+the line to this new wrapper accordingly), and `igGrid`'s tile split its fixed `aspect-ratio:1` into
+an inner `.wallGridMedia` div so the tile itself can grow to fit reactions without distorting the
+photo crop. Share calls the same `shareContent()` used by Event cards and individual photos (native
+share sheet, or the Facebook/copy fallback modal) via a small `shareWallPost(p)` wrapper.
+
 **Custom editor** (admin-only, 🎨 button in the header → "Build a custom theme"): 4 color pickers
 (bg/card/ink/accent) + corner-style/heading-font/animation dropdowns. The 3 remaining tokens
 (`inkSoft`, `accentSoft`, `border`) are auto-derived via CSS `color-mix()` rather than asking for
@@ -320,15 +335,12 @@ theme editor, header banner photo filmstrip, potluck-style event sign-up
 lists, auto-approval on a known email match (verified live in production),
 profile pictures (`avatarHtml()` — real photo or a deterministic colored
 initials circle, used everywhere a person shows up: Contacts, chat, Wall),
-and functional Wall Like/Comments on Facebook Blue + the default card layout
-(see "Theme System" section above and Data Model below).
+and functional Wall Like/Comment/Share across all 9 theme Wall layouts (see
+"Theme System" section above and Data Model below).
 
 **Deferred:** family tree view, native app wrapper,
 deactivating a real account holder's login (vs. the deceased-toggle already
-built for no-account extraContacts), Wall Like/Comments on the other 6 bespoke
-theme layouts (log-line, grid, corkboard, guestbook, sticker, timeline —
-currently only Facebook Blue and the default/Neon card layout show reactions),
-Share on Wall posts still decorative-only in Facebook Blue's action row.
+built for no-account extraContacts).
 
 ## Working Style / Preferences
 
