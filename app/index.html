@@ -232,7 +232,12 @@
   #authScreen p.tag { color: var(--ink-soft); margin-top: 0; margin-bottom: 28px; }
   .field { margin-bottom: 14px; }
   .field label { display: block; font-size: 13px; color: var(--ink-soft); margin-bottom: 4px; }
-  .field input { width: 100%; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius); font-size: 16px; background: var(--card); font-family: var(--font-body); }
+  .field input, .field select { width: 100%; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius); font-size: 16px; background: var(--card); color: var(--ink); font-family: var(--font-body); -webkit-appearance: none; appearance: none; }
+
+  /* Photo crop tool */
+  #cropViewport { position: relative; width: 260px; height: 260px; margin: 0 auto; overflow: hidden; background: #000; border-radius: 8px; touch-action: none; }
+  #cropImg { position: absolute; top: 0; left: 0; transform-origin: 0 0; cursor: grab; user-select: none; -webkit-user-drag: none; max-width: none; }
+  #cropCircleGuide { position: absolute; inset: 0; border-radius: 50%; box-shadow: 0 0 0 9999px rgba(0,0,0,.6); border: 2px solid #fff; pointer-events: none; }
   .btn { display: inline-block; width: 100%; padding: 13px; border: none; border-radius: var(--radius); background: var(--accent); color: #fff; font-size: 16px; font-weight: 600; cursor: pointer; margin-top: 6px; font-family: var(--font-body); }
   .btn.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
   .btn.small { width: auto; padding: 8px 14px; font-size: 14px; }
@@ -306,7 +311,7 @@
   .noAccountBadge { font-size: 10px; background: var(--border); color: var(--ink-soft); padding: 2px 6px; border-radius: 8px; margin-left: 6px; font-weight: 600; vertical-align: middle; }
   .ecSection { margin-top: 14px; padding-top: 10px; border-top: 1px dashed var(--border); }
   code { background: var(--accent-soft); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
-  textarea.bulkPaste { width: 100%; padding: 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; font-family: inherit; }
+  textarea.bulkPaste { width: 100%; padding: 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; font-family: inherit; background: var(--card); color: var(--ink); }
 
   /* Photos */
   .albumGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -650,6 +655,20 @@
     </div>
   </div>
 
+  <!-- Photo crop modal (drag to pan, slider to zoom, circular preview) -->
+  <div class="modalBg" id="cropModalBg">
+    <div class="modalSheet">
+      <h3>Crop photo</h3>
+      <div id="cropViewport">
+        <img id="cropImg" alt="">
+        <div id="cropCircleGuide"></div>
+      </div>
+      <div class="field"><label>Zoom</label><input type="range" id="cropZoom" min="1" max="3" step="0.01" value="1"></div>
+      <button class="btn" id="cropSaveBtn">Use this photo</button>
+      <button class="btn secondary" id="cropCancelBtn">Cancel</button>
+    </div>
+  </div>
+
   <!-- Edit occasion modal -->
   <div class="modalBg" id="editOccModalBg">
     <div class="modalSheet">
@@ -852,7 +871,20 @@ function applyTheme(themeOrId) {
   // fall back to the base color/font/radius/animation system only, hence 'custom' here for
   // anything not a known preset id.
   document.body.setAttribute('data-theme', THEME_PRESETS[t.id] ? t.id : 'custom');
+  // Tell the browser explicitly whether this theme is dark. Without this, some mobile
+  // browsers' forced-dark-mode heuristics (seen on Android Chrome) decide *for themselves*
+  // that unrecognized form fields need re-coloring, and get it wrong inconsistently —
+  // exactly the "hard to read" input text reported on Rasta. Setting color-scheme tells the
+  // browser the page already handles its own dark mode correctly, so it backs off.
+  root.setProperty('color-scheme', isDarkColor(t.vars.bg) ? 'dark' : 'light');
   activeThemeId = t.id;
+}
+
+function isDarkColor(hex) {
+  const c = String(hex).replace('#', '');
+  if (c.length !== 6) return false;
+  const r = parseInt(c.substr(0, 2), 16), g = parseInt(c.substr(2, 2), 16), b = parseInt(c.substr(4, 2), 16);
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255 < 0.5;
 }
 
 function loadAndApplyMyTheme() {
@@ -2549,12 +2581,98 @@ function openEditProfile(uid) {
 $('epCancelBtn').onclick = () => $('editProfileModalBg').classList.remove('open');
 $('epAvatarBtn').onclick = () => $('epAvatarInput').click();
 $('epAvatarInput').addEventListener('change', (e) => {
-  _editingAvatarFile = e.target.files[0] || null;
-  if (_editingAvatarFile) {
-    $('epAvatarPreview').innerHTML = `<img src="${URL.createObjectURL(_editingAvatarFile)}" alt="" style="width:44px; height:44px; border-radius:50%; object-fit:cover">`;
-    $('epAvatarStatus').textContent = _editingAvatarFile.name;
-  }
+  const file = e.target.files[0] || null;
+  e.target.value = '';
+  if (file) openCropModal(file);
 });
+
+// ---------- Photo crop tool (drag to pan, slider to zoom) ----------
+let _cropState = null;
+let _cropDragging = false, _cropDragStartX = 0, _cropDragStartY = 0, _cropStartLeft = 0, _cropStartTop = 0;
+
+function openCropModal(file) {
+  const img = $('cropImg');
+  const url = URL.createObjectURL(file);
+  img.onload = () => {
+    const V = 260;
+    const naturalW = img.naturalWidth, naturalH = img.naturalHeight;
+    const baseScale = Math.max(V / naturalW, V / naturalH);
+    _cropState = { naturalW, naturalH, baseScale, zoom: 1, imgLeft: 0, imgTop: 0, V };
+    _cropState.imgLeft = (V - naturalW * baseScale) / 2;
+    _cropState.imgTop = (V - naturalH * baseScale) / 2;
+    applyCropTransform();
+  };
+  img.src = url;
+  $('cropZoom').value = 1;
+  $('cropModalBg').classList.add('open');
+}
+
+function clampCropOffsets() {
+  const { naturalW, naturalH, baseScale, zoom, V } = _cropState;
+  const scale = baseScale * zoom;
+  const dispW = naturalW * scale, dispH = naturalH * scale;
+  _cropState.imgLeft = Math.max(Math.min(0, V - dispW), Math.min(0, _cropState.imgLeft));
+  _cropState.imgTop = Math.max(Math.min(0, V - dispH), Math.min(0, _cropState.imgTop));
+}
+
+function applyCropTransform() {
+  const { baseScale, zoom, imgLeft, imgTop } = _cropState;
+  $('cropImg').style.transform = `translate(${imgLeft}px, ${imgTop}px) scale(${baseScale * zoom})`;
+}
+
+$('cropViewport').addEventListener('pointerdown', (e) => {
+  if (!_cropState) return;
+  _cropDragging = true;
+  _cropDragStartX = e.clientX; _cropDragStartY = e.clientY;
+  _cropStartLeft = _cropState.imgLeft; _cropStartTop = _cropState.imgTop;
+  $('cropViewport').setPointerCapture(e.pointerId);
+  $('cropImg').style.cursor = 'grabbing';
+});
+$('cropViewport').addEventListener('pointermove', (e) => {
+  if (!_cropDragging || !_cropState) return;
+  _cropState.imgLeft = _cropStartLeft + (e.clientX - _cropDragStartX);
+  _cropState.imgTop = _cropStartTop + (e.clientY - _cropDragStartY);
+  clampCropOffsets();
+  applyCropTransform();
+});
+['pointerup', 'pointercancel'].forEach(evt => $('cropViewport').addEventListener(evt, () => {
+  _cropDragging = false;
+  $('cropImg').style.cursor = 'grab';
+}));
+$('cropViewport').addEventListener('wheel', (e) => {
+  if (!_cropState) return;
+  e.preventDefault();
+  _cropState.zoom = Math.max(1, Math.min(3, _cropState.zoom + (e.deltaY > 0 ? -0.05 : 0.05)));
+  $('cropZoom').value = _cropState.zoom;
+  clampCropOffsets();
+  applyCropTransform();
+});
+$('cropZoom').addEventListener('input', (e) => {
+  if (!_cropState) return;
+  _cropState.zoom = parseFloat(e.target.value);
+  clampCropOffsets();
+  applyCropTransform();
+});
+$('cropCancelBtn').onclick = () => { $('cropModalBg').classList.remove('open'); _cropState = null; };
+$('cropSaveBtn').onclick = () => {
+  if (!_cropState) return;
+  const { naturalW, naturalH, baseScale, zoom, imgLeft, imgTop, V } = _cropState;
+  const scale = baseScale * zoom;
+  const sx = Math.max(0, -imgLeft / scale);
+  const sy = Math.max(0, -imgTop / scale);
+  const sSize = Math.min(V / scale, naturalW - sx, naturalH - sy);
+  const outSize = 400;
+  const canvas = document.createElement('canvas');
+  canvas.width = outSize; canvas.height = outSize;
+  canvas.getContext('2d').drawImage($('cropImg'), sx, sy, sSize, sSize, 0, 0, outSize, outSize);
+  canvas.toBlob((blob) => {
+    _editingAvatarFile = new File([blob], 'avatar.jpg', { type: 'image/jpeg' });
+    $('epAvatarPreview').innerHTML = `<img src="${URL.createObjectURL(_editingAvatarFile)}" alt="" style="width:44px; height:44px; border-radius:50%; object-fit:cover">`;
+    $('epAvatarStatus').textContent = 'Photo cropped — tap Save to apply.';
+    $('cropModalBg').classList.remove('open');
+    _cropState = null;
+  }, 'image/jpeg', 0.9);
+};
 $('epSaveBtn').onclick = async () => {
   if (!_editingUserId) return;
   const payload = {
