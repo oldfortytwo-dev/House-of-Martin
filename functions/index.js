@@ -15,7 +15,7 @@ const GMAIL_APP_PASSWORD = defineSecret('GMAIL_APP_PASSWORD');
 
 // Public half of the Web Push VAPID key pair — safe to hardcode, it's meant to be embedded in
 // client code (matches the same constant in app/index.html). Only the private half is secret.
-const VAPID_PUBLIC_KEY = 'REPLACE_WITH_REAL_VAPID_PUBLIC_KEY';
+const VAPID_PUBLIC_KEY = 'BGGJ7biojqi7m0Cm-sVx-jRU1X3yhISPM3hW6UnBHQBQW-cePg9VthSlFxdo9BGprJZ4cYFXYoTrnFQRImlif_I';
 const VAPID_PRIVATE_KEY = defineSecret('VAPID_PRIVATE_KEY');
 
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];

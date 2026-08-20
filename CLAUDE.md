@@ -473,10 +473,11 @@ commented on, not just the post's original author).
 
 ### Push notifications (real browser/OS notifications when the app is closed)
 
-**Deployed but currently inert — see "one-time setup remaining" below.** The in-app bell only
-fires while the tab is open; this extends the same `notifications/{id}` docs to a real system
-notification via the standard Web Push API — plain Web Push, deliberately **not** Firebase
-Cloud Messaging, so setup never requires a trip to the Firebase Console (see rationale below).
+**Live** — VAPID key pair generated and wired in, secret set, `sendPushOnNotification` deployed
+2026-08-20. The in-app bell only fires while the tab is open; this extends the same
+`notifications/{id}` docs to a real system notification via the standard Web Push API — plain
+Web Push, deliberately **not** Firebase Cloud Messaging, so setup never required a trip to the
+Firebase Console (see rationale below).
 
 - `app/push-sw.js`: a minimal service worker (`push`/`notificationclick` handlers only — no
   Firebase SDK in it at all). Registered on-demand from `enablePush()` in app/index.html, not
@@ -510,32 +511,34 @@ Cloud Messaging, so setup never requires a trip to the Firebase Console (see rat
   share and gets hardcoded in both `app/index.html` (`VAPID_PUBLIC_KEY`) and
   `functions/index.js` (`VAPID_PUBLIC_KEY`) — it's meant to be embedded in client code by
   design, same as Firebase's own `apiKey`.
-- **One-time setup remaining** (do this once, then push notifications work for good):
-  1. `npx web-push generate-vapid-keys` in your own terminal.
-  2. Give Claude the **public** key line only — it gets pasted into the two
-     `VAPID_PUBLIC_KEY = 'REPLACE_WITH_REAL_VAPID_PUBLIC_KEY'` placeholders (currently a literal
-     placeholder string in both files, chosen so the feature fails visibly/safely — the client
-     hides the whole push-notifications row via `pushConfigured()` and the two placeholders
-     would simply mismatch — rather than fail confusingly if a deploy ever went out with a
-     placeholder still in place; that's already happened once — the first deploy of this
-     feature was intentionally hosting-only, before this key existed).
-  3. `firebase functions:secrets:set VAPID_PRIVATE_KEY --project house-of-martin`, pasting the
-     **private** key when prompted (never through Claude).
-  4. `firebase deploy --only functions --project house-of-martin` to pick up the secret and
-     deploy `sendPushOnNotification` for the first time (it didn't exist in any earlier deploy —
-     deploying functions before the secret exists would fail outright).
+- **How the one-time setup actually went** (kept here as a record, since the same shape of
+  step — a fresh, easily-regenerable credential where the CLEAN split is "user generates it,
+  Claude never sees the private half" — will come up again): the user ran
+  `npx web-push generate-vapid-keys` themselves, pasted back only the public key in chat (safe —
+  it's meant to be embedded in client code), which got hardcoded into both
+  `VAPID_PUBLIC_KEY` constants (`app/index.html` and `functions/index.js`); the user separately
+  ran `firebase functions:secrets:set VAPID_PRIVATE_KEY --project house-of-martin` themselves,
+  entering the private key at the hidden CLI prompt — it never appeared in this session at all.
+  Deploying `functions:sendPushOnNotification` before the secret existed failed immediately and
+  clearly (`Cloud Secret Manager has no latest version of the secret defined by param
+  VAPID_PRIVATE_KEY`) rather than silently, confirming the placeholder-based degrade worked as
+  designed right up until the real deploy.
 - Client-side UI degrades in three tiers, checked in this order in `renderPushRow()`: not
-  configured yet (`VAPID_PUBLIC_KEY` still a placeholder) → the whole row stays empty, no
-  confusing message; configured but the browser doesn't support Web Push → a plain explanatory
-  line, no button; configured and supported → the actual enable/disable toggle.
-- Verified against the emulator with the placeholder key still in place (this is the state as
-  of this deploy): the Notifications modal opens without error and the push row correctly
-  stays empty rather than showing a broken or confusing control; `push-sw.js` was confirmed
-  served as the real static file (not swallowed by the hosting config's SPA catch-all rewrite —
-  Firebase Hosting serves an exact static-file match before applying rewrites, verified via a
-  direct `curl` against production returning the actual service worker content, not
-  `index.html`). The actual subscribe → notify → receive round trip can't be verified until the
-  real key pair exists; re-verify that specifically once the one-time setup above is done.
+  configured (`VAPID_PUBLIC_KEY` still the literal placeholder string) → the whole row stays
+  empty, no confusing message; configured but the browser doesn't support Web Push → a plain
+  explanatory line, no button; configured and supported → the actual enable/disable toggle. Now
+  that the real key is wired in, every approved member sees the actual toggle on a supported
+  browser.
+- Verified so far: the full placeholder-state degrade (Notifications modal opens cleanly, push
+  row correctly empty, no console errors) against the emulator; `push-sw.js` confirmed served as
+  the real static file in production via direct `curl` (not swallowed by the hosting config's
+  SPA catch-all rewrite — Firebase Hosting serves an exact static-file match before applying
+  rewrites); the `sendPushOnNotification` deploy itself succeeding cleanly once the secret
+  existed. **Not yet verified**: an actual subscribe → notify → receive round trip on a real
+  device — Claude has no real production login and deliberately never held the private key, so
+  this specific check needs a real member (e.g. the user) to tap "Enable push notifications,"
+  grant the browser permission prompt, and confirm a real reaction/comment from someone else
+  produces an actual OS-level notification.
 
 ## Roles & Privacy
 
@@ -576,8 +579,7 @@ a Family Tree view
 tap-to-open profile pages from anywhere a person shows up (see "Profile
 pages" section above), and a notifications bell for reactions/comments on your
 posts (see "Notifications" section above), with real browser/OS push notifications
-built and deployed but pending a one-time VAPID key setup step (see "Push
-notifications" above) before they actually fire.
+now live (see "Push notifications" above).
 
 **Deferred:** native app wrapper,
 deactivating a real account holder's login (vs. the deceased-toggle already
