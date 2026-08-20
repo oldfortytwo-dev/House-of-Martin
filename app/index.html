@@ -121,8 +121,10 @@
   body[data-theme="command"] #wallComposer h3::before { content: '$ '; color: var(--accent); }
   body[data-theme="command"] #wallText { background: var(--bg); border-color: var(--accent); font-family: var(--font-body); caret-color: var(--accent); }
   body[data-theme="command"] .wallLog { font-family: var(--font-body); font-size: 13px; border: 1px solid var(--border); border-radius: 2px; overflow: hidden; margin-bottom: 12px; }
-  body[data-theme="command"] .wallLogLine { display: flex; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--border); align-items: baseline; }
-  body[data-theme="command"] .wallLogLine:last-child { border-bottom: none; }
+  body[data-theme="command"] .wallLogEntry { border-bottom: 1px solid var(--border); }
+  body[data-theme="command"] .wallLogEntry:last-child { border-bottom: none; }
+  body[data-theme="command"] .wallLogEntry .wallCommentSection { margin: 0 10px 8px; }
+  body[data-theme="command"] .wallLogLine { display: flex; gap: 8px; padding: 6px 10px; align-items: baseline; flex-wrap: wrap; }
   body[data-theme="command"] .wallLogLine .ts { color: var(--ink-soft); flex-shrink: 0; }
   body[data-theme="command"] .wallLogLine .who { color: var(--accent); font-weight: 700; flex-shrink: 0; }
   body[data-theme="command"] .wallLogLine .txt { flex: 1; word-break: break-word; }
@@ -135,11 +137,13 @@
   body[data-theme="rasta"] header.topbar h2::before { content: '🦁 '; }
 
   /* Instagram Grid Wall: an actual photo grid (like a real IG profile), not a list of cards */
-  .wallGrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px; }
-  .wallGridTile { position: relative; aspect-ratio: 1; overflow: hidden; background: var(--accent-soft); }
-  .wallGridTile img { width: 100%; height: 100%; object-fit: cover; cursor: pointer; display: block; }
+  .wallGrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px; align-items: start; }
+  .wallGridTile { background: var(--card); }
+  .wallGridMedia { position: relative; aspect-ratio: 1; overflow: hidden; background: var(--accent-soft); }
+  .wallGridMedia img { width: 100%; height: 100%; object-fit: cover; cursor: pointer; display: block; }
   .wallGridQuote { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; padding: 8px; font-size: 10px; text-align: center; font-style: italic; }
   .wallGridTile .wallDel { position: absolute; top: 2px; right: 2px; background: rgba(0,0,0,.55); color: #fff; border-radius: 50%; width: 18px; height: 18px; font-size: 10px; }
+  .wallGridTile .wallReactionRow { font-size: 11px; padding: 3px 4px; gap: 8px; }
 
   /* Retro Photo Album Wall: a scrapbook page of tilted polaroid-caption tiles */
   .wallAlbumGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
@@ -157,6 +161,8 @@
   .fbActions { display: flex; gap: 18px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); font-size: 13px; color: var(--ink-soft); font-weight: 600; }
   .fbActions button { background: none; border: none; padding: 0; font: inherit; color: inherit; cursor: pointer; }
   .wallLikeBtn.liked { color: var(--accent); }
+  .wallReactionRow { display: flex; gap: 12px; margin-top: 6px; font-size: 12px; color: var(--ink-soft); align-items: center; }
+  .wallReactionRow button { background: none; border: none; padding: 0; font: inherit; color: inherit; cursor: pointer; }
   .wallCommentSection { display: none; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border); }
   .wallCommentRow { display: flex; align-items: center; gap: 6px; font-size: 13px; padding: 4px 0; }
   .wallCommentRow .who { font-weight: 700; flex-shrink: 0; }
@@ -1612,6 +1618,8 @@ function renderWallFeed(snap) {
         const p = d.data();
         const canDelete = p.authorId === currentUser.uid || myDoc.role === 'admin';
         const ts = p.createdAt && p.createdAt.toDate ? p.createdAt.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--';
+        const wrapEntry = document.createElement('div');
+        wrapEntry.className = 'wallLogEntry';
         const line = document.createElement('div');
         line.className = 'wallLogLine';
         line.innerHTML = `
@@ -1619,11 +1627,19 @@ function renderWallFeed(snap) {
           <span class="who">${escapeHtml((p.authorName || '').toUpperCase())}:</span>
           <span class="txt">${escapeHtml(p.text || '')}${p.audience && p.audience !== 'everyone' ? ' <span class="hh">(' + escapeHtml(describeAudience(p)) + ')</span>' : ''}</span>
           ${p.photoUrl ? `<img class="thumb" src="${p.photoUrl}" alt="">` : ''}
+          ${likeButtonHtml(p, '')}
+          <button class="wallCommentToggle" title="Comments">💬</button>
+          <button class="wallPostShareBtn" title="Share">🔗</button>
           ${canDelete ? `<button class="editBtn wallDel">×</button>` : ''}
         `;
         if (p.photoUrl) line.querySelector('.thumb').onclick = () => window.open(p.photoUrl, '_blank');
         if (canDelete) line.querySelector('.wallDel').onclick = wallDeleteHandler(d.id, p.photoStoragePath);
-        log.appendChild(line);
+        wrapEntry.appendChild(line);
+        const commentBox = document.createElement('div');
+        commentBox.innerHTML = commentSectionHtml();
+        wrapEntry.appendChild(commentBox.firstElementChild);
+        wireLikeAndComments(wrapEntry, d.id, p);
+        log.appendChild(wrapEntry);
       });
       wrap.appendChild(log);
       return;
@@ -1637,11 +1653,13 @@ function renderWallFeed(snap) {
         const canDelete = p.authorId === currentUser.uid || myDoc.role === 'admin';
         const tile = document.createElement('div');
         tile.className = 'wallGridTile';
-        tile.innerHTML = p.photoUrl
+        const media = p.photoUrl
           ? `<img src="${p.photoUrl}" alt="">${canDelete ? '<button class="editBtn wallDel">✕</button>' : ''}`
           : `<div class="wallGridQuote">"${escapeHtml(p.text || '')}"<br><span class="hh">— ${escapeHtml(p.authorName || '')}</span></div>${canDelete ? '<button class="editBtn wallDel">✕</button>' : ''}`;
+        tile.innerHTML = `<div class="wallGridMedia">${media}</div>${reactionsBlockHtml(p)}`;
         if (p.photoUrl) tile.querySelector('img').onclick = () => window.open(p.photoUrl, '_blank');
         if (canDelete) tile.querySelector('.wallDel').onclick = wallDeleteHandler(d.id, p.photoStoragePath);
+        wireLikeAndComments(tile, d.id, p);
         grid.appendChild(tile);
       });
       wrap.appendChild(grid);
@@ -1662,9 +1680,11 @@ function renderWallFeed(snap) {
           ${p.photoUrl ? `<img src="${p.photoUrl}" alt="">` : `<div class="wallAlbumNoPhoto">📝</div>`}
           <div class="cap">${escapeHtml(p.text || '')}<br><span class="hh">— ${escapeHtml(p.authorName || '')}</span></div>
           ${canDelete ? `<button class="editBtn wallDel">✕</button>` : ''}
+          ${reactionsBlockHtml(p)}
         `;
         if (p.photoUrl) tile.querySelector('img').onclick = () => window.open(p.photoUrl, '_blank');
         if (canDelete) tile.querySelector('.wallDel').onclick = wallDeleteHandler(d.id, p.photoStoragePath);
+        wireLikeAndComments(tile, d.id, p);
         grid.appendChild(tile);
       });
       wrap.appendChild(grid);
@@ -1686,7 +1706,7 @@ function renderWallFeed(snap) {
           </div>
           ${p.text ? `<div class="txt">${escapeHtml(p.text)}</div>` : ''}
           ${p.photoUrl ? `<img src="${p.photoUrl}" alt="">` : ''}
-          <div class="fbActions">${likeButtonHtml(p, 'Like')}<button class="wallCommentToggle">💬 Comment</button><span>↗ Share</span></div>
+          <div class="fbActions">${likeButtonHtml(p, 'Like')}<button class="wallCommentToggle">💬 Comment</button><button class="wallPostShareBtn">↗ Share</button></div>
           ${commentSectionHtml()}
         `;
         if (p.photoUrl) card.querySelector('img').onclick = () => window.open(p.photoUrl, '_blank');
@@ -1711,9 +1731,11 @@ function renderWallFeed(snap) {
           ${p.photoUrl ? `<img src="${p.photoUrl}" alt="">` : ''}
           <div class="cap">${escapeHtml(p.text || '')}<br><span class="hh">— ${escapeHtml(p.authorName || '')}</span></div>
           ${canDelete ? `<button class="editBtn wallDel">✕</button>` : ''}
+          ${reactionsBlockHtml(p)}
         `;
         if (p.photoUrl) tile.querySelector('img').onclick = () => window.open(p.photoUrl, '_blank');
         if (canDelete) tile.querySelector('.wallDel').onclick = wallDeleteHandler(d.id, p.photoStoragePath);
+        wireLikeAndComments(tile, d.id, p);
         board.appendChild(tile);
       });
       wrap.appendChild(board);
@@ -1737,9 +1759,11 @@ function renderWallFeed(snap) {
           <div class="txt"><span class="who">${escapeHtml(p.authorName || '')}</span>${text ? ' — ' + escapeHtml(text) : ''}</div>
           <div class="when">${when}</div>
           ${p.photoUrl ? `<img src="${p.photoUrl}" alt="">` : ''}
+          ${reactionsBlockHtml(p)}
         `;
         if (p.photoUrl) entry.querySelector('img').onclick = () => window.open(p.photoUrl, '_blank');
         if (canDelete) entry.querySelector('.wallDel').onclick = wallDeleteHandler(d.id, p.photoStoragePath);
+        wireLikeAndComments(entry, d.id, p);
         list.appendChild(entry);
       });
       wrap.appendChild(list);
@@ -1759,9 +1783,11 @@ function renderWallFeed(snap) {
           ${p.photoUrl ? `<img src="${p.photoUrl}" alt="">` : ''}
           <div class="txt">${escapeHtml(p.text || '')}</div>
           <div class="hh">${escapeHtml(p.authorName || '')}</div>
+          ${reactionsBlockHtml(p)}
         `;
         if (p.photoUrl) tile.querySelector('img').onclick = () => window.open(p.photoUrl, '_blank');
         if (canDelete) tile.querySelector('.wallDel').onclick = wallDeleteHandler(d.id, p.photoStoragePath);
+        wireLikeAndComments(tile, d.id, p);
         grid.appendChild(tile);
       });
       wrap.appendChild(grid);
@@ -1782,9 +1808,11 @@ function renderWallFeed(snap) {
           <span class="who">${escapeHtml(p.authorName || '')}</span> <span class="hh">${when}</span>
           ${p.text ? `<div class="txt">${escapeHtml(p.text)}</div>` : ''}
           ${p.photoUrl ? `<img src="${p.photoUrl}" alt="">` : ''}
+          ${reactionsBlockHtml(p)}
         `;
         if (p.photoUrl) item.querySelector('img').onclick = () => window.open(p.photoUrl, '_blank');
         if (canDelete) item.querySelector('.wallDel').onclick = wallDeleteHandler(d.id, p.photoStoragePath);
+        wireLikeAndComments(item, d.id, p);
         tl.appendChild(item);
       });
       wrap.appendChild(tl);
@@ -1814,7 +1842,7 @@ function buildDefaultWallCard(id, p) {
     <div class="when">${when}${p.audience && p.audience !== 'everyone' ? ' · Posted to: ' + escapeHtml(describeAudience(p)) : ''}</div>
     ${p.text ? `<div class="txt">${escapeHtml(p.text)}</div>` : ''}
     ${p.photoUrl ? `<img src="${p.photoUrl}" alt="">` : ''}
-    <div class="fbActions">${likeButtonHtml(p, 'Like')}<button class="wallCommentToggle">💬 Comment</button></div>
+    <div class="fbActions">${likeButtonHtml(p, 'Like')}<button class="wallCommentToggle">💬 Comment</button><button class="wallPostShareBtn">↗ Share</button></div>
     ${commentSectionHtml()}
   `;
   if (p.photoUrl) card.querySelector('img').onclick = () => window.open(p.photoUrl, '_blank');
@@ -1827,7 +1855,8 @@ function buildDefaultWallCard(id, p) {
 function likeButtonHtml(p, label) {
   const liked = (p.likedBy || []).includes(currentUser.uid);
   const count = (p.likedBy || []).length;
-  return `<button class="wallLikeBtn${liked ? ' liked' : ''}">${liked ? '❤️' : '🤍'} ${escapeHtml(label)}${count ? ' (' + count + ')' : ''}</button>`;
+  const labelPart = label ? ' ' + escapeHtml(label) : '';
+  return `<button class="wallLikeBtn${liked ? ' liked' : ''}">${liked ? '❤️' : '🤍'}${labelPart}${count ? ' (' + count + ')' : ''}</button>`;
 }
 
 function commentSectionHtml() {
@@ -1840,6 +1869,20 @@ function commentSectionHtml() {
   </div>`;
 }
 
+// Compact reaction row for the space-constrained theme layouts (log line, grid tile,
+// corkboard pin, guestbook entry, sticker, timeline) — same Like/Comment wiring as
+// buildDefaultWallCard()/Facebook Blue, just without the labeled "Like"/"Comment" text
+// and without the decorative Share span those two already had (Share is now a real
+// button everywhere via shareWallPost(), see below).
+function reactionsBlockHtml(p) {
+  return `<div class="wallReactionRow">${likeButtonHtml(p, '')}<button class="wallCommentToggle" title="Comments">💬</button><button class="wallPostShareBtn" title="Share">🔗</button></div>${commentSectionHtml()}`;
+}
+
+function shareWallPost(p) {
+  const text = p.text ? `"${p.text}" — via House of Martin` : 'Check this out on House of Martin!';
+  shareContent({ text, url: p.photoUrl || SITE_URL });
+}
+
 async function toggleLike(postId, currentLikedBy) {
   const liked = (currentLikedBy || []).includes(currentUser.uid);
   const updated = liked ? (currentLikedBy || []).filter(u => u !== currentUser.uid) : [...(currentLikedBy || []), currentUser.uid];
@@ -1849,6 +1892,9 @@ async function toggleLike(postId, currentLikedBy) {
 function wireLikeAndComments(card, postId, p) {
   const likeBtn = card.querySelector('.wallLikeBtn');
   if (likeBtn) likeBtn.onclick = () => toggleLike(postId, p.likedBy || []);
+
+  const shareBtn = card.querySelector('.wallPostShareBtn');
+  if (shareBtn) shareBtn.onclick = () => shareWallPost(p);
 
   const toggle = card.querySelector('.wallCommentToggle');
   const section = card.querySelector('.wallCommentSection');
