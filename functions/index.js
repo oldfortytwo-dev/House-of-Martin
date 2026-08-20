@@ -5,12 +5,18 @@ const { onCall, HttpsError } = require('firebase-functions/v2/https');
 const { onDocumentCreated } = require('firebase-functions/v2/firestore');
 const { defineSecret } = require('firebase-functions/params');
 const nodemailer = require('nodemailer');
+const webpush = require('web-push');
 
 initializeApp();
 const db = getFirestore();
 
 const GMAIL_USER = defineSecret('GMAIL_USER');
 const GMAIL_APP_PASSWORD = defineSecret('GMAIL_APP_PASSWORD');
+
+// Public half of the Web Push VAPID key pair — safe to hardcode, it's meant to be embedded in
+// client code (matches the same constant in app/index.html). Only the private half is secret.
+const VAPID_PUBLIC_KEY = 'REPLACE_WITH_REAL_VAPID_PUBLIC_KEY';
+const VAPID_PRIVATE_KEY = defineSecret('VAPID_PRIVATE_KEY');
 
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
@@ -221,4 +227,37 @@ exports.autoApproveKnownEmail = onDocumentCreated('users/{uid}', async (event) =
     return;
   }
   // No match — stays pending for the normal manual approval in Admin tab.
+});
+
+// Fires whenever the client writes a notifications/{id} doc (see notifyReaction()/
+// notifyComment() in app/index.html) and pushes a real browser/OS notification to every
+// device the recipient has enabled push on. Additive to the in-app bell, not a replacement —
+// if this fails or nobody's subscribed, the in-app notification still exists and was already
+// written by the client before this trigger even runs.
+exports.sendPushOnNotification = onDocumentCreated({ document: 'notifications/{id}', secrets: [VAPID_PRIVATE_KEY] }, async (event) => {
+  const n = event.data.data();
+  const userSnap = await db.collection('users').doc(n.forUserId).get();
+  const subs = (userSnap.data() || {}).pushSubscriptions || [];
+  if (!subs.length) return;
+
+  webpush.setVapidDetails('mailto:noreply@ramcommonlogic.com', VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY.value());
+
+  const title = n.type === 'reaction'
+    ? `${n.fromUserName} reacted to your post`
+    : `${n.fromUserName} commented on your post`;
+  const body = n.type === 'comment' ? (n.textPreview || '') : '';
+  const payload = JSON.stringify({ title, body, url: '/', tag: `notif_${n.postId}` });
+
+  const results = await Promise.allSettled(subs.map(s => webpush.sendNotification(s, payload)));
+  // A 404/410 means the browser/OS has permanently invalidated that subscription (uninstalled,
+  // permission revoked at the OS level, etc.) — prune it so future sends don't keep retrying a
+  // dead endpoint. Any other failure (network blip, etc.) is left alone; it'll just be retried
+  // next time.
+  const stillValid = subs.filter((s, i) => {
+    const r = results[i];
+    return !(r.status === 'rejected' && [404, 410].includes(r.reason && r.reason.statusCode));
+  });
+  if (stillValid.length !== subs.length) {
+    await userSnap.ref.update({ pushSubscriptions: stillValid });
+  }
 });

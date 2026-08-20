@@ -490,6 +490,7 @@
       <div class="modalBg" id="notifModalBg">
         <div class="modalSheet">
           <h3 style="margin-top:0">🔔 Notifications</h3>
+          <div id="pushRow" style="margin-bottom:10px"></div>
           <div id="notifList"></div>
           <div class="empty" id="notifEmpty" style="display:none">No notifications yet — reactions and comments on your posts show up here.</div>
           <button class="btn secondary" id="notifCloseBtn" style="margin-top:14px">Close</button>
@@ -869,7 +870,7 @@ import {
   signOut, connectAuthEmulator
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
 import {
-  getFirestore, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection, addDoc, query, orderBy, limit, where,
+  getFirestore, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection, addDoc, query, orderBy, limit, where, arrayUnion,
   onSnapshot, serverTimestamp, connectFirestoreEmulator, writeBatch
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import {
@@ -1693,8 +1694,69 @@ function initNotifications() {
   unsubNotifs = onSnapshot(q, renderNotifications);
 }
 
-$('notifBtn').onclick = () => $('notifModalBg').classList.add('open');
+$('notifBtn').onclick = () => { renderPushRow(); $('notifModalBg').classList.add('open'); };
 $('notifCloseBtn').onclick = () => $('notifModalBg').classList.remove('open');
+
+// ---------- Push notifications (real browser/OS notifications when the app isn't open) ----------
+// Plain Web Push, not Firebase Cloud Messaging — a subscription is just {endpoint, keys:{p256dh,
+// auth}}, stored in users/{uid}.pushSubscriptions[] (one entry per device/browser the member has
+// enabled it on). The matching send side lives in functions/index.js (sendPushOnNotification),
+// triggered by the same notifications/{id} docs that feed the in-app bell — push is additive, not
+// a replacement path, so it stays consistent with what's shown in-app for free.
+const VAPID_PUBLIC_KEY = 'REPLACE_WITH_REAL_VAPID_PUBLIC_KEY';
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+}
+
+function pushConfigured() { return VAPID_PUBLIC_KEY.indexOf('REPLACE_WITH') !== 0; }
+function browserSupportsPush() { return 'serviceWorker' in navigator && 'PushManager' in window; }
+
+async function currentPushSubscription() {
+  if (!pushConfigured() || !browserSupportsPush()) return null;
+  const reg = await navigator.serviceWorker.getRegistration('/push-sw.js');
+  return reg ? reg.pushManager.getSubscription() : null;
+}
+
+async function enablePush() {
+  const reg = await navigator.serviceWorker.register('/push-sw.js');
+  const permission = await Notification.requestPermission();
+  if (permission !== 'granted') { renderPushRow('Notifications permission was not granted.'); return; }
+  const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY) });
+  const json = sub.toJSON();
+  await updateDoc(doc(db, 'users', currentUser.uid), { pushSubscriptions: arrayUnion({ endpoint: json.endpoint, keys: json.keys }) });
+  renderPushRow();
+}
+
+async function disablePush() {
+  const sub = await currentPushSubscription();
+  if (sub) {
+    const json = sub.toJSON();
+    const mine = (myDoc.pushSubscriptions || []).filter(s => s.endpoint !== json.endpoint);
+    await updateDoc(doc(db, 'users', currentUser.uid), { pushSubscriptions: mine });
+    await sub.unsubscribe();
+  }
+  renderPushRow();
+}
+
+async function renderPushRow(errorMsg) {
+  if (!pushConfigured()) { $('pushRow').innerHTML = ''; return; } // not set up yet — stay invisible rather than confuse
+  if (!browserSupportsPush()) {
+    $('pushRow').innerHTML = `<div class="hh">Push notifications aren't available on this browser/device.</div>`;
+    return;
+  }
+  const sub = await currentPushSubscription();
+  if (sub) {
+    $('pushRow').innerHTML = `<div class="hh">🔔 Push notifications are ON for this device. <button class="btn small secondary" id="pushToggleBtn" style="width:auto">Turn off</button></div>`;
+    $('pushToggleBtn').onclick = disablePush;
+  } else {
+    $('pushRow').innerHTML = `<button class="btn small secondary" id="pushToggleBtn" style="width:auto">🔔 Enable push notifications on this device</button>${errorMsg ? `<div class="errMsg">${escapeHtml(errorMsg)}</div>` : ''}`;
+    $('pushToggleBtn').onclick = enablePush;
+  }
+}
 
 // ---------- Household self-service (responder edits their own household) ----------
 let myHouseholdEcState = {}; // extraContact id -> 'edit' | undefined
