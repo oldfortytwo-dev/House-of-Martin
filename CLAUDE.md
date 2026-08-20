@@ -89,8 +89,9 @@ suspecting the boolean logic.
 
 - **User** (`users/{uid}`): name, email, phone, birthdate (age shown publicly only if ≤21),
   photoUrl (profile picture, Storage path `avatars/{fileName}`; falls back to a deterministic
-  colored initials circle everywhere via `avatarHtml()` when not set), role (member/friend/admin),
-  status (pending/approved), householdId, inviteCodeUsed
+  colored initials circle everywhere via `avatarHtml()` when not set — selecting a photo in the
+  Edit Info modal opens a crop/zoom tool first, see "Photo crop tool" below, rather than uploading
+  the raw file), role (member/friend/admin), status (pending/approved), householdId, inviteCodeUsed
 - **Household** (`households/{id}`): name, memberIds[], responderId (RSVPs/edits for the household),
   phone, address, anniversary, extraContacts[] ({id, name, birthdate, phone, email} — family members
   with no account of their own, e.g. young kids or relatives who'll never sign up)
@@ -240,6 +241,27 @@ Verified end-to-end against the emulator: admin's family-default write persisted
 correctly inherited it live, the same non-admin was correctly denied writing `config/appearance`
 directly, and a personal `localStorage` override correctly beat the family default on reload
 (including pre-login).
+
+**Dark-theme form-field contrast**: `applyTheme()` computes a luminance check on the theme's `bg`
+color (`isDarkColor()`) and sets the CSS `color-scheme` property (`dark`/`light`) on `:root`
+accordingly. This isn't cosmetic — without it, some mobile browsers' forced-dark-mode heuristics
+(confirmed on Android Chrome) decide independently that unrecognized form fields need re-coloring,
+and get it wrong inconsistently, which is what caused a reported "hard to read" bug on Rasta's Edit
+Info form. `color-scheme` tells the browser the page already handles dark mode correctly so it
+backs off. Inputs/selects/textareas also got explicit `color`/`background`/`-webkit-appearance:none`
+as defensive backup, but `color-scheme` was the actual fix — if a future theme has readability
+complaints again, check this before assuming it's a plain contrast/color-token problem.
+
+**Photo crop tool** (`#cropModalBg`, opens from the Edit Info modal's "Change photo" instead of
+uploading the picked file directly): drag-to-pan + slider/wheel-to-zoom (1x-3x) against a circular
+guide overlay, always exports a 400x400 JPEG via canvas regardless of the source image's own
+dimensions/aspect ratio. The crop math tracks its own pan/zoom state (`_cropState`) rather than
+reading back rendered CSS transform values — `sx = -imgLeft/scale`, `sy = -imgTop/scale`,
+`sSize = min(viewport/scale, remaining source width, remaining source height)`. Verified by
+dispatching a real file-input change event with a synthetic two-color test image (not a
+reimplementation of the math): the initial centered transform matched the hand-derived cover-fit
+formula exactly, and decoding the final cropped output showed sampled pixels landed exactly where
+the formula predicted.
 
 ## Weekly Digest Email (Cloud Functions)
 
