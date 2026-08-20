@@ -136,9 +136,9 @@ suspecting the boolean logic.
 - **Post** (`posts/{id}`): text, photoUrl, photoStoragePath (both null if text-only), authorId,
   authorName, createdAt, audience ('everyone'|'custom'), invitedHouseholdIds[], invitedBranchIds[],
   invitedUserIds[] — same shape and same addressing-not-access-control tradeoff as Event audience
-  (see that entry above). likedBy[] (uids — any approved member can toggle themselves in/out via a
-  Firestore rule scoped to `diff().affectedKeys().hasOnly(['likedBy'])`, so liking someone else's
-  post can't be used to sneak in an edit to the text/photo). The Family Wall (Photos tab, labeled
+  (see that entry above). reactions ({uid: 'like'|'love'|'haha'|'wow'|'sad'|'angry'} — six
+  Facebook-style reaction types, see "Reactions" below; replaced the original plain likedBy[]
+  array). The Family Wall (Photos tab, labeled
   🧱 Wall in nav) — direct text+photo posting to the family (or a chosen household/branch/individual
   subset, shown as "Posted to: ..." on the card), no album required. This is the primary
   photo-sharing path now; Albums are secondary/curated, reachable via "Show organized albums."
@@ -206,20 +206,46 @@ shape where a theme just wants a grid wrapper around it — branch only `renderW
 on the cached last snapshot (`_lastWallSnap`) so switching themes mid-view re-renders immediately
 instead of waiting for the next Firestore update.
 
-**Like/Comment/Share work identically across all 9 layouts**, not just Facebook Blue — the same
-three shared pieces get dropped into every branch: `reactionsBlockHtml(p)` (compact heart+count,
-💬 toggle, 🔗 share — used by the 7 space-constrained layouts) or the labeled `.fbActions` markup
-(Facebook Blue and the default/Neon card) for the HTML, and `wireLikeAndComments(container, id, p)`
-to wire it up afterward (finds `.wallLikeBtn`/`.wallCommentToggle`/`.wallPostShareBtn`/
-`.wallCommentSection` by class within whatever `container` you pass it — a tile, a card, a log-line
-wrapper, doesn't matter). Comments are lazy-subscribed only when a viewer actually expands a post's
-comment section, not eagerly for every post in the feed. Two layouts needed structural adjustment
+**Reactions/Comment/Share work identically across all 9 layouts**, not just Facebook Blue — the
+same shared pieces get dropped into every branch: `reactionsBlockHtml(p)` (compact reaction
+button + count, 💬 toggle, 🔗 share — used by the 7 space-constrained layouts) or the labeled
+`.fbActions` markup (Facebook Blue and the default/Neon card) for the HTML, and
+`wireLikeAndComments(container, id, p)` to wire it up afterward (finds `.wallLikeBtn`/
+`.wallReactMore`/`.wallReactPicker`/`.wallCommentToggle`/`.wallPostShareBtn`/`.wallCommentSection`
+by class within whatever `container` you pass it — a tile, a card, a log-line wrapper, doesn't
+matter). Comments are lazy-subscribed only when a viewer actually expands a post's comment
+section, not eagerly for every post in the feed. Two layouts needed structural adjustment
 to make room: `command`'s log-line got wrapped in a `.wallLogEntry` div per entry (the comment
 section needs a block-level home to expand into, and `:last-child` border-removal had to move from
 the line to this new wrapper accordingly), and `igGrid`'s tile split its fixed `aspect-ratio:1` into
 an inner `.wallGridMedia` div so the tile itself can grow to fit reactions without distorting the
 photo crop. Share calls the same `shareContent()` used by Event cards and individual photos (native
 share sheet, or the Facebook/copy fallback modal) via a small `shareWallPost(p)` wrapper.
+
+**Reactions** (`likeButtonHtml()`/`REACTIONS`): six Facebook-style types — Like 👍, Love ❤️, Haha
+😂, Wow 😮, Sad 😢, Angry 😡 — stored as `posts/{id}.reactions`, a `{uid: type}` map (replaced the
+original plain `likedBy[]` array). Each post's reaction control is two buttons plus a popover:
+tapping the main button is a quick toggle (adds/removes a plain Like, or switches your existing
+reaction to Like); tapping the small "▾ " button next to it opens a 6-emoji picker
+(`.wallReactPicker`) to react with something else, switch, or tap your current reaction again to
+remove it. The "▾" button itself also shows the top few distinct reaction emojis present on the
+post plus the total count (Facebook's small aggregate-summary convention). Only one open picker
+at a time — opening one closes any other, and a delegated `document` click listener closes an
+open picker when you tap anywhere outside `.wallReactWrap`.
+
+`setReaction(postId, type, currentReactions)` writes the *whole* map back (spread the existing
+object, set-or-delete just the caller's own key) — safe because the matching `firestore.rules`
+clause enforces the restriction server-side: `request.resource.data.reactions.diff(resource.data
+.get('reactions', {})).affectedKeys().hasOnly([request.auth.uid])`, i.e. the map's *actual
+changed keys* (not just the keys present) must be exactly the caller's own uid, so a client can't
+overwrite anyone else's reaction by including their key unchanged in the same write, and definitely
+can't change it. Verified against the emulator, including a false-positive caught and re-tested
+properly: a non-admin, non-author account was correctly denied changing another user's reaction
+to a genuinely different value; an earlier same-value overwrite attempt had appeared to "succeed"
+only because it was a no-op diff (identical value in, identical value out — Firestore rules'
+`hasOnly([])` on an empty changed-keys set is vacuously true), not a real hole — re-tested with a
+value actually different from the current one and correctly denied. Setting/changing/removing your
+own key succeeded in all cases; sneaking a `text` field edit into the same write was denied.
 
 **Custom editor** (admin-only, 🎨 button in the header → "Build a custom theme"): 4 color pickers
 (bg/card/ink/accent) + corner-style/heading-font/animation dropdowns. The 3 remaining tokens
@@ -439,8 +465,9 @@ theme editor, header banner photo filmstrip, potluck-style event sign-up
 lists, auto-approval on a known email match (verified live in production),
 profile pictures (`avatarHtml()` — real photo or a deterministic colored
 initials circle, used everywhere a person shows up: Contacts, chat, Wall),
-functional Wall Like/Comment/Share across all 9 theme Wall layouts (see
-"Theme System" section above and Data Model below), a Family Tree view
+functional Wall Reactions/Comment/Share across all 9 theme Wall layouts, with six
+Facebook-style reaction types (see "Theme System" section above and Data Model below),
+a Family Tree view
 (Branch → Household → Person grouping — see "Family Tree" section above),
 and tap-to-open profile pages from anywhere a person shows up (see "Profile
 pages" section above).

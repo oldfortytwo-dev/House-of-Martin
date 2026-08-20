@@ -175,10 +175,14 @@ service cloud.firestore {
       // a broad collection query without reworking every query to be provably scoped).
       allow read: if isApprovedMember();
       allow create: if isApprovedMember() && request.resource.data.authorId == request.auth.uid;
-      // Any approved member can update ONLY the likedBy field (a Like toggle) on someone
-      // else's post; everything else (edit text, delete) stays author/admin-only.
+      // Any approved member can update ONLY the reactions field (Like/Love/Haha/Wow/Sad/Angry)
+      // on someone else's post, and only their OWN key within that map — the inner
+      // .diff().affectedKeys() check (same self-toggle pattern as households/branches below)
+      // stops a reaction update from being used to add/remove/overwrite anyone else's
+      // reaction. Everything else (edit text, delete) stays author/admin-only.
       allow update: if isAdmin() || (signedIn() && resource.data.authorId == request.auth.uid) ||
-        (isApprovedMember() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likedBy']));
+        (isApprovedMember() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions']) &&
+          request.resource.data.reactions.diff(resource.data.get('reactions', {})).affectedKeys().hasOnly([request.auth.uid]));
       allow delete: if isAdmin() || (signedIn() && resource.data.authorId == request.auth.uid);
 
       match /comments/{commentId} {

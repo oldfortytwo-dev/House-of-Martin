@@ -163,6 +163,17 @@
   .wallLikeBtn.liked { color: var(--accent); }
   .wallReactionRow { display: flex; gap: 12px; margin-top: 6px; font-size: 12px; color: var(--ink-soft); align-items: center; }
   .wallReactionRow button { background: none; border: none; padding: 0; font: inherit; color: inherit; cursor: pointer; }
+  /* Reaction picker popover — shared by every theme's Wall layout via likeButtonHtml() */
+  .wallReactWrap { position: relative; display: inline-flex; align-items: center; gap: 4px; }
+  .wallReactMore { font-size: 0.85em; opacity: .75; }
+  .wallReactPicker {
+    position: absolute; bottom: 100%; left: 0; margin-bottom: 6px; z-index: 30;
+    display: flex; gap: 4px; padding: 5px 7px; border-radius: 999px;
+    background: var(--card); border: 1px solid var(--border); box-shadow: 0 6px 18px rgba(0,0,0,.18);
+  }
+  .wallReactOpt { font-size: 19px; line-height: 1; padding: 2px !important; border-radius: 50%; transition: transform .1s ease; }
+  .wallReactOpt:hover, .wallReactOpt.active { transform: scale(1.35); }
+  .wallReactOpt.active { background: var(--accent-soft) !important; }
   .wallCommentSection { display: none; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border); }
   .wallCommentRow { display: flex; align-items: center; gap: 6px; font-size: 13px; padding: 4px 0; }
   .wallCommentRow .who { font-weight: 700; flex-shrink: 0; }
@@ -2053,12 +2064,36 @@ function buildDefaultWallCard(id, p) {
   return card;
 }
 
-// ---------- Wall reactions (Like + Comments) — shared across every theme's Wall renderer ----------
+// ---------- Wall reactions (Like/Love/Haha/Wow/Sad/Angry + Comments) — shared across every
+// theme's Wall renderer ----------
+const REACTIONS = [
+  { type: 'like', emoji: '👍', label: 'Like' },
+  { type: 'love', emoji: '❤️', label: 'Love' },
+  { type: 'haha', emoji: '😂', label: 'Haha' },
+  { type: 'wow', emoji: '😮', label: 'Wow' },
+  { type: 'sad', emoji: '😢', label: 'Sad' },
+  { type: 'angry', emoji: '😡', label: 'Angry' },
+];
+function reactionMeta(type) { return REACTIONS.find(r => r.type === type); }
+
+// Trigger button (tap = quick toggle Like, or your existing reaction if you already reacted)
+// plus a "▾" expand button that opens a 6-emoji picker popover to react with something other
+// than a plain Like, or to switch/remove your existing reaction. Every theme's Wall layout
+// gets this for free — they all call likeButtonHtml() (directly, or via reactionsBlockHtml()).
 function likeButtonHtml(p, label) {
-  const liked = (p.likedBy || []).includes(currentUser.uid);
-  const count = (p.likedBy || []).length;
-  const labelPart = label ? ' ' + escapeHtml(label) : '';
-  return `<button class="wallLikeBtn${liked ? ' liked' : ''}">${liked ? '❤️' : '🤍'}${labelPart}${count ? ' (' + count + ')' : ''}</button>`;
+  const reactions = p.reactions || {};
+  const mineType = reactions[currentUser.uid];
+  const mine = mineType ? reactionMeta(mineType) : null;
+  const counts = {};
+  Object.values(reactions).forEach(t => { counts[t] = (counts[t] || 0) + 1; });
+  const total = Object.keys(reactions).length;
+  const topEmoji = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([t]) => reactionMeta(t).emoji).join('');
+  const labelPart = label ? ' ' + escapeHtml(mine ? mine.label : label) : '';
+  return `<span class="wallReactWrap">
+    <button class="wallLikeBtn${mine ? ' liked' : ''}">${mine ? mine.emoji : '🤍'}${labelPart}</button>
+    <button class="wallReactMore" title="React">${topEmoji}${total ? ' ' + total : ''}▾</button>
+    <div class="wallReactPicker" style="display:none">${REACTIONS.map(r => `<button class="wallReactOpt${mineType === r.type ? ' active' : ''}" data-type="${r.type}" title="${r.label}">${r.emoji}</button>`).join('')}</div>
+  </span>`;
 }
 
 function commentSectionHtml() {
@@ -2085,15 +2120,41 @@ function shareWallPost(p) {
   shareContent({ text, url: p.photoUrl || SITE_URL });
 }
 
-async function toggleLike(postId, currentLikedBy) {
-  const liked = (currentLikedBy || []).includes(currentUser.uid);
-  const updated = liked ? (currentLikedBy || []).filter(u => u !== currentUser.uid) : [...(currentLikedBy || []), currentUser.uid];
-  await updateDoc(doc(db, 'posts', postId), { likedBy: updated });
+// Setting the same type you already have removes it (tap-to-toggle); any other type
+// (including 'like' from the quick-tap button) switches/adds it. Only ever touches the
+// caller's own key in the map — see the matching self-toggle rule in firestore.rules.
+async function setReaction(postId, type, currentReactions) {
+  const updated = { ...(currentReactions || {}) };
+  if (updated[currentUser.uid] === type) delete updated[currentUser.uid];
+  else updated[currentUser.uid] = type;
+  await updateDoc(doc(db, 'posts', postId), { reactions: updated });
+  closeAllReactionPickers();
 }
+
+function closeAllReactionPickers() {
+  document.querySelectorAll('.wallReactPicker').forEach(el => { el.style.display = 'none'; });
+}
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.wallReactWrap')) closeAllReactionPickers();
+});
 
 function wireLikeAndComments(card, postId, p) {
   const likeBtn = card.querySelector('.wallLikeBtn');
-  if (likeBtn) likeBtn.onclick = () => toggleLike(postId, p.likedBy || []);
+  if (likeBtn) likeBtn.onclick = () => setReaction(postId, 'like', p.reactions || {});
+
+  const moreBtn = card.querySelector('.wallReactMore');
+  const picker = card.querySelector('.wallReactPicker');
+  if (moreBtn && picker) {
+    moreBtn.onclick = (e) => {
+      e.stopPropagation();
+      const opening = picker.style.display === 'none';
+      closeAllReactionPickers();
+      picker.style.display = opening ? 'flex' : 'none';
+    };
+    picker.querySelectorAll('.wallReactOpt').forEach(btn => {
+      btn.onclick = (e) => { e.stopPropagation(); setReaction(postId, btn.dataset.type, p.reactions || {}); };
+    });
+  }
 
   const shareBtn = card.querySelector('.wallPostShareBtn');
   if (shareBtn) shareBtn.onclick = () => shareWallPost(p);
