@@ -462,6 +462,18 @@
         </div>
       </div>
 
+      <!-- Profile page -->
+      <div class="modalBg" id="profileModalBg">
+        <div class="modalSheet">
+          <div id="profileHeader"></div>
+          <div id="profileActions" style="margin:10px 0"></div>
+          <h3 style="margin-bottom:6px">Posts</h3>
+          <div id="profileFeed"></div>
+          <div class="empty" id="profileFeedEmpty" style="display:none">No Wall posts yet.</div>
+          <button class="btn secondary" id="profileCloseBtn" style="margin-top:14px">Close</button>
+        </div>
+      </div>
+
       <!-- Calendar -->
       <section class="tabpane" id="pane-calendar">
         <div class="card" id="occCard">
@@ -1125,7 +1137,7 @@ function loadMessages() {
       const div = document.createElement('div');
       div.className = 'msg' + (m.senderId === currentUser.uid ? ' mine' : '');
       const senderPhoto = usersById[m.senderId] && usersById[m.senderId].photoUrl;
-      div.innerHTML = `<div class="who">${avatarHtml(m.senderName, senderPhoto, 16)} ${escapeHtml(m.senderName || '')}</div>${escapeHtml(m.text || '')}`;
+      div.innerHTML = `<div class="who profileLink" data-uid="${m.senderId}" style="cursor:pointer">${avatarHtml(m.senderName, senderPhoto, 16)} ${escapeHtml(m.senderName || '')}</div>${escapeHtml(m.text || '')}`;
       list.appendChild(div);
     });
     list.scrollIntoView({ block: 'end' });
@@ -1456,7 +1468,10 @@ function renderContacts() {
     const header = `<div class="hhHeader"><span>${hh ? '🏠 ' + escapeHtml(hh.name) : 'No household set'}</span>${contactLine}</div>`;
     const memberRows = (byHousehold[key] || []).map(u => `
       <div class="contactRow">
-        <div style="display:flex; align-items:center; gap:8px">${avatarHtml(u.name, u.photoUrl, 32)}<div class="nm">${escapeHtml(u.name)}${hh && hh.responderId === u.id ? '<span class="respBadge">responder</span>' : ''}${ageBadgeHtml(u)}${canEditProfile(u.id) ? `<button class="editBtn" data-uid="${u.id}">✎</button>` : ''}${u.id !== currentUser.uid ? `<button class="editBtn dmBtn" data-uid="${u.id}" title="Message">💬</button>` : ''}</div></div>
+        <div style="display:flex; align-items:center; gap:8px">
+          <span class="profileLink" data-uid="${u.id}" style="display:flex; align-items:center; gap:8px; cursor:pointer">${avatarHtml(u.name, u.photoUrl, 32)}<span class="nm">${escapeHtml(u.name)}${hh && hh.responderId === u.id ? '<span class="respBadge">responder</span>' : ''}${ageBadgeHtml(u)}</span></span>
+          ${canEditProfile(u.id) ? `<button class="editBtn" data-uid="${u.id}">✎</button>` : ''}${u.id !== currentUser.uid ? `<button class="editBtn dmBtn" data-uid="${u.id}" title="Message">💬</button>` : ''}
+        </div>
         <div class="info">${escapeHtml(u.email || '')}${u.phone ? '<br>' + escapeHtml(u.phone) : ''}</div>
       </div>`).join('');
     const extraRows = ((hh && hh.extraContacts) || []).map(ec => `
@@ -1519,6 +1534,61 @@ function renderFamilyTree() {
 
 $('openTreeBtn').onclick = () => { renderFamilyTree(); $('treeModalBg').classList.add('open'); };
 $('treeCloseBtn').onclick = () => $('treeModalBg').classList.remove('open');
+
+// ---------- Profile pages ----------
+// Any avatar/name marked class="profileLink" data-uid="..." anywhere in the app (Contacts,
+// chat, Wall posts across all 9 theme layouts) opens the tapped person's profile — one
+// delegated listener instead of wiring a click handler at every render site individually.
+document.addEventListener('click', (e) => {
+  const link = e.target.closest('.profileLink');
+  if (link && link.dataset.uid) openProfile(link.dataset.uid);
+});
+
+let unsubProfileFeed = null;
+
+function openProfile(uid) {
+  const u = usersById[uid];
+  if (!u) return;
+  const hh = u.householdId ? householdsById[u.householdId] : null;
+  const branchNames = hh ? branches.filter(b => (b.householdIds || []).includes(hh.id)).map(b => b.name) : [];
+  $('profileHeader').innerHTML = `
+    <div style="display:flex; align-items:center; gap:14px">
+      ${avatarHtml(u.name, u.photoUrl, 72)}
+      <div>
+        <div style="font-size:1.3em; font-weight:700">${escapeHtml(u.name)}${ageBadgeHtml(u)}</div>
+        ${u.role === 'admin' ? '<div class="hh">⭐ Admin</div>' : ''}
+        ${hh ? `<div class="hh">🏠 ${escapeHtml(hh.name)}${hh.responderId === u.id ? ' <span class="respBadge">responder</span>' : ''}</div>` : '<div class="hh">No household set</div>'}
+        ${branchNames.length ? `<div class="hh">🌳 ${branchNames.map(escapeHtml).join(', ')}</div>` : ''}
+      </div>
+    </div>`;
+  const actions = [];
+  if (canEditProfile(uid)) actions.push(`<button class="btn small secondary" id="profileEditBtn" style="width:auto">✎ Edit Info</button>`);
+  if (uid !== currentUser.uid) actions.push(`<button class="btn small secondary" id="profileDmBtn" style="width:auto">💬 Message</button>`);
+  $('profileActions').innerHTML = actions.join(' ');
+  if ($('profileEditBtn')) $('profileEditBtn').onclick = () => { $('profileModalBg').classList.remove('open'); openEditProfile(uid); };
+  if ($('profileDmBtn')) $('profileDmBtn').onclick = () => { $('profileModalBg').classList.remove('open'); startDM(uid); };
+
+  $('profileFeed').innerHTML = '';
+  $('profileFeedEmpty').style.display = 'none';
+  if (unsubProfileFeed) { unsubProfileFeed(); unsubProfileFeed = null; }
+  // No orderBy here on purpose — an equality filter (authorId) plus orderBy on a different
+  // field (createdAt) needs a composite Firestore index; sorting the small per-person result
+  // client-side avoids that entirely (same avoided-composite-index pattern used elsewhere).
+  const q = query(collection(db, 'posts'), where('authorId', '==', uid));
+  unsubProfileFeed = onSnapshot(q, (snap) => {
+    const docs = snap.docs.slice().sort((a, b) => (b.data().createdAt ? b.data().createdAt.toMillis() : 0) - (a.data().createdAt ? a.data().createdAt.toMillis() : 0));
+    $('profileFeedEmpty').style.display = docs.length ? 'none' : 'block';
+    $('profileFeed').innerHTML = '';
+    docs.forEach(d => $('profileFeed').appendChild(buildDefaultWallCard(d.id, d.data())));
+  });
+
+  $('profileModalBg').classList.add('open');
+}
+
+$('profileCloseBtn').onclick = () => {
+  $('profileModalBg').classList.remove('open');
+  if (unsubProfileFeed) { unsubProfileFeed(); unsubProfileFeed = null; }
+};
 
 // ---------- Household self-service (responder edits their own household) ----------
 let myHouseholdEcState = {}; // extraContact id -> 'edit' | undefined
@@ -1756,7 +1826,7 @@ function renderWallFeed(snap) {
         line.className = 'wallLogLine';
         line.innerHTML = `
           <span class="ts">[${ts}]</span>
-          <span class="who">${escapeHtml((p.authorName || '').toUpperCase())}:</span>
+          <span class="who profileLink" data-uid="${p.authorId}" style="cursor:pointer">${escapeHtml((p.authorName || '').toUpperCase())}:</span>
           <span class="txt">${escapeHtml(p.text || '')}${p.audience && p.audience !== 'everyone' ? ' <span class="hh">(' + escapeHtml(describeAudience(p)) + ')</span>' : ''}</span>
           ${p.photoUrl ? `<img class="thumb" src="${p.photoUrl}" alt="">` : ''}
           ${likeButtonHtml(p, '')}
@@ -1787,7 +1857,7 @@ function renderWallFeed(snap) {
         tile.className = 'wallGridTile';
         const media = p.photoUrl
           ? `<img src="${p.photoUrl}" alt="">${canDelete ? '<button class="editBtn wallDel">✕</button>' : ''}`
-          : `<div class="wallGridQuote">"${escapeHtml(p.text || '')}"<br><span class="hh">— ${escapeHtml(p.authorName || '')}</span></div>${canDelete ? '<button class="editBtn wallDel">✕</button>' : ''}`;
+          : `<div class="wallGridQuote">"${escapeHtml(p.text || '')}"<br><span class="hh profileLink" data-uid="${p.authorId}" style="cursor:pointer">— ${escapeHtml(p.authorName || '')}</span></div>${canDelete ? '<button class="editBtn wallDel">✕</button>' : ''}`;
         tile.innerHTML = `<div class="wallGridMedia">${media}</div>${reactionsBlockHtml(p)}`;
         if (p.photoUrl) tile.querySelector('img').onclick = () => window.open(p.photoUrl, '_blank');
         if (canDelete) tile.querySelector('.wallDel').onclick = wallDeleteHandler(d.id, p.photoStoragePath);
@@ -1810,7 +1880,7 @@ function renderWallFeed(snap) {
         i++;
         tile.innerHTML = `
           ${p.photoUrl ? `<img src="${p.photoUrl}" alt="">` : `<div class="wallAlbumNoPhoto">📝</div>`}
-          <div class="cap">${escapeHtml(p.text || '')}<br><span class="hh">— ${escapeHtml(p.authorName || '')}</span></div>
+          <div class="cap">${escapeHtml(p.text || '')}<br><span class="hh profileLink" data-uid="${p.authorId}" style="cursor:pointer">— ${escapeHtml(p.authorName || '')}</span></div>
           ${canDelete ? `<button class="editBtn wallDel">✕</button>` : ''}
           ${reactionsBlockHtml(p)}
         `;
@@ -1833,7 +1903,7 @@ function renderWallFeed(snap) {
         card.className = 'card wallPost fbPost';
         card.innerHTML = `
           ${canDelete ? `<button class="editBtn wallDel" data-id="${d.id}">✕</button>` : ''}
-          <div class="fbHead">${avatarHtml(p.authorName, authorPhoto, 36)}
+          <div class="fbHead profileLink" data-uid="${p.authorId}" style="cursor:pointer">${avatarHtml(p.authorName, authorPhoto, 36)}
             <div><div class="who">${escapeHtml(p.authorName || '')}</div><div class="when">${when}${p.audience && p.audience !== 'everyone' ? ' · ' + escapeHtml(describeAudience(p)) : ''}</div></div>
           </div>
           ${p.text ? `<div class="txt">${escapeHtml(p.text)}</div>` : ''}
@@ -1861,7 +1931,7 @@ function renderWallFeed(snap) {
         tile.className = 'wallPinTile ' + rots[i % 3]; i++;
         tile.innerHTML = `
           ${p.photoUrl ? `<img src="${p.photoUrl}" alt="">` : ''}
-          <div class="cap">${escapeHtml(p.text || '')}<br><span class="hh">— ${escapeHtml(p.authorName || '')}</span></div>
+          <div class="cap">${escapeHtml(p.text || '')}<br><span class="hh profileLink" data-uid="${p.authorId}" style="cursor:pointer">— ${escapeHtml(p.authorName || '')}</span></div>
           ${canDelete ? `<button class="editBtn wallDel">✕</button>` : ''}
           ${reactionsBlockHtml(p)}
         `;
@@ -1888,7 +1958,7 @@ function renderWallFeed(snap) {
         entry.innerHTML = `
           ${canDelete ? `<button class="editBtn wallDel">✕</button>` : ''}
           <span class="dropcap">${escapeHtml(dropChar)}</span>
-          <div class="txt"><span class="who">${escapeHtml(p.authorName || '')}</span>${text ? ' — ' + escapeHtml(text) : ''}</div>
+          <div class="txt"><span class="who profileLink" data-uid="${p.authorId}" style="cursor:pointer">${escapeHtml(p.authorName || '')}</span>${text ? ' — ' + escapeHtml(text) : ''}</div>
           <div class="when">${when}</div>
           ${p.photoUrl ? `<img src="${p.photoUrl}" alt="">` : ''}
           ${reactionsBlockHtml(p)}
@@ -1914,7 +1984,7 @@ function renderWallFeed(snap) {
           ${canDelete ? `<button class="editBtn wallDel">✕</button>` : ''}
           ${p.photoUrl ? `<img src="${p.photoUrl}" alt="">` : ''}
           <div class="txt">${escapeHtml(p.text || '')}</div>
-          <div class="hh">${escapeHtml(p.authorName || '')}</div>
+          <div class="hh profileLink" data-uid="${p.authorId}" style="cursor:pointer">${escapeHtml(p.authorName || '')}</div>
           ${reactionsBlockHtml(p)}
         `;
         if (p.photoUrl) tile.querySelector('img').onclick = () => window.open(p.photoUrl, '_blank');
@@ -1937,7 +2007,7 @@ function renderWallFeed(snap) {
         item.className = 'wallTimelineItem';
         item.innerHTML = `
           ${canDelete ? `<button class="editBtn wallDel">✕</button>` : ''}
-          <span class="who">${escapeHtml(p.authorName || '')}</span> <span class="hh">${when}</span>
+          <span class="who profileLink" data-uid="${p.authorId}" style="cursor:pointer">${escapeHtml(p.authorName || '')}</span> <span class="hh">${when}</span>
           ${p.text ? `<div class="txt">${escapeHtml(p.text)}</div>` : ''}
           ${p.photoUrl ? `<img src="${p.photoUrl}" alt="">` : ''}
           ${reactionsBlockHtml(p)}
@@ -1970,7 +2040,7 @@ function buildDefaultWallCard(id, p) {
   card.className = 'card wallPost';
   card.innerHTML = `
     ${canDelete ? `<button class="editBtn wallDel" data-id="${id}">✕</button>` : ''}
-    <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px">${avatarHtml(p.authorName, authorPhoto, 32)}<div class="who">${escapeHtml(p.authorName || '')}</div></div>
+    <div class="profileLink" data-uid="${p.authorId}" style="display:flex; align-items:center; gap:8px; margin-bottom:6px; cursor:pointer">${avatarHtml(p.authorName, authorPhoto, 32)}<div class="who">${escapeHtml(p.authorName || '')}</div></div>
     <div class="when">${when}${p.audience && p.audience !== 'everyone' ? ' · Posted to: ' + escapeHtml(describeAudience(p)) : ''}</div>
     ${p.text ? `<div class="txt">${escapeHtml(p.text)}</div>` : ''}
     ${p.photoUrl ? `<img src="${p.photoUrl}" alt="">` : ''}
@@ -2044,7 +2114,7 @@ function wireLikeAndComments(card, postId, p) {
           const c = cd.data();
           const canDel = c.authorId === currentUser.uid || myDoc.role === 'admin';
           const cPhoto = usersById[c.authorId] && usersById[c.authorId].photoUrl;
-          return `<div class="wallCommentRow">${avatarHtml(c.authorName, cPhoto, 20)}<span class="who">${escapeHtml(c.authorName || '')}</span> ${escapeHtml(c.text || '')}${canDel ? `<button class="editBtn wallCommentDel" data-id="${cd.id}">✕</button>` : ''}</div>`;
+          return `<div class="wallCommentRow"><span class="profileLink" data-uid="${c.authorId}" style="display:inline-flex; align-items:center; gap:6px; cursor:pointer">${avatarHtml(c.authorName, cPhoto, 20)}<span class="who">${escapeHtml(c.authorName || '')}</span></span> ${escapeHtml(c.text || '')}${canDel ? `<button class="editBtn wallCommentDel" data-id="${cd.id}">✕</button>` : ''}</div>`;
         }).join('') || '<div class="hh">No comments yet.</div>';
         list.querySelectorAll('.wallCommentDel').forEach(btn => {
           btn.onclick = async () => { await deleteDoc(doc(db, 'posts', postId, 'comments', btn.dataset.id)); };

@@ -376,6 +376,37 @@ Verified against the emulator: a branch containing one household (with 2 real me
 unrelated household correctly fell into "Not in any group"; a third seeded user with no
 `householdId` correctly fell into "No household"; open/close both worked; no console errors.
 
+## Profile pages
+
+Tap any person's avatar or name anywhere in the app — Contacts, chat messages, a Wall post's
+author, a comment's author — and their profile opens (`#profileModalBg`): a header (avatar,
+name, age badge, admin badge, household, and any branch(es) their household belongs to),
+Edit Info / Message action buttons (same visibility rules as elsewhere — `canEditProfile()`
+for the edit button, hidden for your own Message button), and a feed of just their own Wall
+posts, rendered via the existing plain `buildDefaultWallCard()` regardless of the viewer's
+active theme.
+
+Wiring uses one delegated `document` click listener for any element tagged
+`class="profileLink" data-uid="{uid}"`, rather than a per-render-site handler — added to
+Contacts rows, chat message sender lines, comment author lines, and the author name/avatar
+in all 9 Wall theme layouts (`renderWallFeed()`) plus `buildDefaultWallCard()`. When a new
+Wall layout or another "person shows up" surface is added later, tag its author/name element
+the same way and the click just works — no extra wiring needed.
+
+The profile's own post feed queries `where('authorId','==',uid)` with **no** `orderBy` —
+combining an equality filter with `orderBy` on a different field needs a composite Firestore
+index; sorting the (typically small, single-person) result client-side avoids that, same
+avoided-composite-index approach used by `fetchOrdersFromFirestore`-style code elsewhere in
+this project's sibling repo. The feed listener (`onSnapshot`) is subscribed only while the
+modal is open and explicitly unsubscribed on close, so it doesn't linger as a background
+listener for every profile ever viewed in a session.
+
+Verified against the emulator: opened from Contacts, from a classic-theme Wall post, and
+from a Facebook Blue-theme Wall post — header/household/branch/posts all rendered correctly
+in each case, close button unsubscribed and closed correctly, no new console errors beyond a
+pre-existing transient reload race already documented above (unrelated to this feature — its
+listener doesn't start until the modal is actually opened).
+
 ## Roles & Privacy
 
 - **Admin**: approve members/friends, manage households/branches, generate invite codes, full visibility,
@@ -409,8 +440,10 @@ lists, auto-approval on a known email match (verified live in production),
 profile pictures (`avatarHtml()` — real photo or a deterministic colored
 initials circle, used everywhere a person shows up: Contacts, chat, Wall),
 functional Wall Like/Comment/Share across all 9 theme Wall layouts (see
-"Theme System" section above and Data Model below), and a Family Tree view
-(Branch → Household → Person grouping — see "Family Tree" section above).
+"Theme System" section above and Data Model below), a Family Tree view
+(Branch → Household → Person grouping — see "Family Tree" section above),
+and tap-to-open profile pages from anywhere a person shows up (see "Profile
+pages" section above).
 
 **Deferred:** native app wrapper,
 deactivating a real account holder's login (vs. the deceased-toggle already
