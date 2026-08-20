@@ -174,6 +174,18 @@
   .wallReactOpt { font-size: 19px; line-height: 1; padding: 2px !important; border-radius: 50%; transition: transform .1s ease; }
   .wallReactOpt:hover, .wallReactOpt.active { transform: scale(1.35); }
   .wallReactOpt.active { background: var(--accent-soft) !important; }
+
+  /* Notifications */
+  .notifBadge {
+    position: absolute; top: -4px; right: -4px; background: #e0245e; color: #fff;
+    font-size: 10px; font-weight: 700; min-width: 16px; height: 16px; border-radius: 8px;
+    display: flex; align-items: center; justify-content: center; padding: 0 3px; line-height: 1;
+  }
+  .notifRow { display: flex; gap: 10px; align-items: flex-start; padding: 10px 4px; border-bottom: 1px solid var(--border); cursor: pointer; }
+  .notifRow:last-child { border-bottom: none; }
+  .notifRow.unread { background: var(--accent-soft); border-radius: var(--radius); }
+  .notifRow .notifBody { font-size: 13px; }
+  .notifRow .when { font-size: 11px; color: var(--ink-soft); margin-top: 2px; }
   .wallCommentSection { display: none; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border); }
   .wallCommentRow { display: flex; align-items: center; gap: 6px; font-size: 13px; padding: 4px 0; }
   .wallCommentRow .who { font-weight: 700; flex-shrink: 0; }
@@ -424,6 +436,7 @@
         <div class="sub" id="whoami"></div>
       </div>
       <div style="display:flex; gap:8px">
+        <button class="btn secondary small" id="notifBtn" title="Notifications" style="position:relative">🔔<span class="notifBadge" id="notifBadge" style="display:none">0</span></button>
         <button class="btn secondary small" id="themeBtn" title="Theme">🎨</button>
         <button class="btn secondary small" id="signOutBtn">Sign out</button>
       </div>
@@ -470,6 +483,16 @@
           <p class="hh">Branches, households, and the people in them — grouped by how the family's set up in the app, not by parent/child lineage (we don't track that yet).</p>
           <div id="treeBody"></div>
           <button class="btn secondary" id="treeCloseBtn" style="margin-top:14px">Close</button>
+        </div>
+      </div>
+
+      <!-- Notifications -->
+      <div class="modalBg" id="notifModalBg">
+        <div class="modalSheet">
+          <h3 style="margin-top:0">🔔 Notifications</h3>
+          <div id="notifList"></div>
+          <div class="empty" id="notifEmpty" style="display:none">No notifications yet — reactions and comments on your posts show up here.</div>
+          <button class="btn secondary" id="notifCloseBtn" style="margin-top:14px">Close</button>
         </div>
       </div>
 
@@ -846,7 +869,7 @@ import {
   signOut, connectAuthEmulator
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
 import {
-  getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection, addDoc, query, orderBy, limit, where,
+  getFirestore, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection, addDoc, query, orderBy, limit, where,
   onSnapshot, serverTimestamp, connectFirestoreEmulator, writeBatch
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import {
@@ -964,7 +987,7 @@ let digestSubmissions = [];
 let pendingCount = 0, eventsCount = 0, albumsCount = 0;
 let unsubMsgs = null, unsubEvents = null, unsubAlbums = null, unsubContacts = null, unsubPending = null,
     unsubInvites = null, unsubHouseholds = null, unsubBranches = null, unsubPhotos = null, unsubOccasions = null,
-    unsubDMs = null, unsubDigest = null, unsubAppearance = null, unsubWall = null;
+    unsubDMs = null, unsubDigest = null, unsubAppearance = null, unsubWall = null, unsubNotifs = null;
 let _openAlbumId = null;
 let _wallPhotoFile = null;
 
@@ -1056,6 +1079,7 @@ onAuthStateChanged(auth, (user) => {
     initDMs();
     initDigestSubmissions();
     initAppearance();
+    initNotifications();
     if (myDoc.role === 'admin') { initAdmin(); }
   });
 });
@@ -1065,8 +1089,8 @@ function show(id) {
 }
 
 function cleanupListeners() {
-  [unsubMsgs, unsubEvents, unsubAlbums, unsubContacts, unsubPending, unsubInvites, unsubHouseholds, unsubBranches, unsubPhotos, unsubOccasions, unsubDMs, unsubDigest, unsubAppearance, unsubWall].forEach(u => u && u());
-  unsubMsgs = unsubEvents = unsubAlbums = unsubContacts = unsubPending = unsubInvites = unsubHouseholds = unsubBranches = unsubPhotos = unsubOccasions = unsubDMs = unsubDigest = unsubAppearance = unsubWall = null;
+  [unsubMsgs, unsubEvents, unsubAlbums, unsubContacts, unsubPending, unsubInvites, unsubHouseholds, unsubBranches, unsubPhotos, unsubOccasions, unsubDMs, unsubDigest, unsubAppearance, unsubWall, unsubNotifs].forEach(u => u && u());
+  unsubMsgs = unsubEvents = unsubAlbums = unsubContacts = unsubPending = unsubInvites = unsubHouseholds = unsubBranches = unsubPhotos = unsubOccasions = unsubDMs = unsubDigest = unsubAppearance = unsubWall = unsubNotifs = null;
 }
 
 // ---------- Tab nav ----------
@@ -1601,6 +1625,77 @@ $('profileCloseBtn').onclick = () => {
   if (unsubProfileFeed) { unsubProfileFeed(); unsubProfileFeed = null; }
 };
 
+// ---------- Notifications (reactions + comments on your posts) ----------
+// A doc per event, {forUserId, fromUserId, fromUserName, type: 'reaction'|'comment', postId,
+// reactionType?, textPreview?, createdAt, read}. Reaction notifications use a deterministic id
+// (reaction_{postId}_{fromUserId}) so switching your reaction updates the same notification
+// instead of piling up duplicates, and removing your reaction deletes it outright — see
+// setReaction() below, which is the only place these are written.
+function notifDocId(postId, fromUid) { return `reaction_${postId}_${fromUid}`; }
+
+async function notifyReaction(postId, forUserId, type) {
+  if (!forUserId || forUserId === currentUser.uid) return; // never notify yourself
+  await setDoc(doc(db, 'notifications', notifDocId(postId, currentUser.uid)), {
+    forUserId, fromUserId: currentUser.uid, fromUserName: myDoc.name,
+    type: 'reaction', postId, reactionType: type, createdAt: serverTimestamp(), read: false
+  });
+}
+async function clearReactionNotif(postId) {
+  try { await deleteDoc(doc(db, 'notifications', notifDocId(postId, currentUser.uid))); } catch (err) { /* never existed — fine */ }
+}
+
+// Notifies the post's author, plus anyone else who's already commented on it (thread
+// activity) — excluding the commenter themself and anyone notified twice.
+async function notifyComment(postId, postAuthorId, commentText) {
+  const preview = (commentText || '').slice(0, 80);
+  const recipients = new Set();
+  if (postAuthorId && postAuthorId !== currentUser.uid) recipients.add(postAuthorId);
+  try {
+    const priorComments = await getDocs(collection(db, 'posts', postId, 'comments'));
+    priorComments.forEach(d => {
+      const authorId = d.data().authorId;
+      if (authorId && authorId !== currentUser.uid) recipients.add(authorId);
+    });
+  } catch (err) { console.warn('Could not look up prior commenters for notifications', err); }
+  await Promise.all([...recipients].map(forUserId => addDoc(collection(db, 'notifications'), {
+    forUserId, fromUserId: currentUser.uid, fromUserName: myDoc.name,
+    type: 'comment', postId, textPreview: preview, createdAt: serverTimestamp(), read: false
+  })));
+}
+
+function notifRowHtml(id, n) {
+  const who = usersById[n.fromUserId];
+  const photo = who && who.photoUrl;
+  const when = n.createdAt && n.createdAt.toDate ? n.createdAt.toDate().toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '';
+  const desc = n.type === 'reaction'
+    ? `${(reactionMeta(n.reactionType) || { emoji: '👍' }).emoji} reacted to your post`
+    : `💬 commented: "${escapeHtml(n.textPreview || '')}"`;
+  return `<div class="notifRow${n.read ? '' : ' unread'}" data-id="${id}">
+    <span class="profileLink" data-uid="${n.fromUserId}">${avatarHtml(n.fromUserName, photo, 32)}</span>
+    <div class="notifBody"><b>${escapeHtml(n.fromUserName || '')}</b> ${desc}<div class="when">${when}</div></div>
+  </div>`;
+}
+
+function renderNotifications(snap) {
+  const docs = snap.docs.slice().sort((a, b) => (b.data().createdAt ? b.data().createdAt.toMillis() : 0) - (a.data().createdAt ? a.data().createdAt.toMillis() : 0));
+  const unread = docs.filter(d => !d.data().read).length;
+  $('notifBadge').style.display = unread ? 'flex' : 'none';
+  $('notifBadge').textContent = unread > 9 ? '9+' : String(unread);
+  $('notifEmpty').style.display = docs.length ? 'none' : 'block';
+  $('notifList').innerHTML = docs.map(d => notifRowHtml(d.id, d.data())).join('');
+  $('notifList').querySelectorAll('.notifRow').forEach(row => {
+    row.onclick = () => { if (row.classList.contains('unread')) updateDoc(doc(db, 'notifications', row.dataset.id), { read: true }); };
+  });
+}
+
+function initNotifications() {
+  const q = query(collection(db, 'notifications'), where('forUserId', '==', currentUser.uid));
+  unsubNotifs = onSnapshot(q, renderNotifications);
+}
+
+$('notifBtn').onclick = () => $('notifModalBg').classList.add('open');
+$('notifCloseBtn').onclick = () => $('notifModalBg').classList.remove('open');
+
 // ---------- Household self-service (responder edits their own household) ----------
 let myHouseholdEcState = {}; // extraContact id -> 'edit' | undefined
 
@@ -2123,11 +2218,12 @@ function shareWallPost(p) {
 // Setting the same type you already have removes it (tap-to-toggle); any other type
 // (including 'like' from the quick-tap button) switches/adds it. Only ever touches the
 // caller's own key in the map — see the matching self-toggle rule in firestore.rules.
-async function setReaction(postId, type, currentReactions) {
+async function setReaction(postId, type, currentReactions, postAuthorId) {
   const updated = { ...(currentReactions || {}) };
-  if (updated[currentUser.uid] === type) delete updated[currentUser.uid];
-  else updated[currentUser.uid] = type;
+  const removing = updated[currentUser.uid] === type;
+  if (removing) delete updated[currentUser.uid]; else updated[currentUser.uid] = type;
   await updateDoc(doc(db, 'posts', postId), { reactions: updated });
+  if (removing) await clearReactionNotif(postId); else await notifyReaction(postId, postAuthorId, type);
   closeAllReactionPickers();
 }
 
@@ -2140,7 +2236,7 @@ document.addEventListener('click', (e) => {
 
 function wireLikeAndComments(card, postId, p) {
   const likeBtn = card.querySelector('.wallLikeBtn');
-  if (likeBtn) likeBtn.onclick = () => setReaction(postId, 'like', p.reactions || {});
+  if (likeBtn) likeBtn.onclick = () => setReaction(postId, 'like', p.reactions || {}, p.authorId);
 
   const moreBtn = card.querySelector('.wallReactMore');
   const picker = card.querySelector('.wallReactPicker');
@@ -2152,7 +2248,7 @@ function wireLikeAndComments(card, postId, p) {
       picker.style.display = opening ? 'flex' : 'none';
     };
     picker.querySelectorAll('.wallReactOpt').forEach(btn => {
-      btn.onclick = (e) => { e.stopPropagation(); setReaction(postId, btn.dataset.type, p.reactions || {}); };
+      btn.onclick = (e) => { e.stopPropagation(); setReaction(postId, btn.dataset.type, p.reactions || {}, p.authorId); };
     });
   }
 
@@ -2190,6 +2286,7 @@ function wireLikeAndComments(card, postId, p) {
     if (!text) return;
     input.value = '';
     await addDoc(collection(db, 'posts', postId, 'comments'), { text, authorId: currentUser.uid, authorName: myDoc.name, createdAt: serverTimestamp() });
+    notifyComment(postId, p.authorId, text);
   };
   send.onclick = doSend;
   input.addEventListener('keydown', e => { if (e.key === 'Enter') doSend(); });

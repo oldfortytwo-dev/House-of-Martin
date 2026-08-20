@@ -76,6 +76,17 @@ service cloud.firestore {
           request.resource.data.householdIds.toSet().difference([me().householdId].toSet());
     }
 
+    match /notifications/{notifId} {
+      // Someone else's reaction/comment on your post. The actor (fromUserId) creates it — never
+      // themselves as the recipient (no self-notify) — and can also delete it later (needed so
+      // removing a reaction can delete the notification it generated); the recipient (forUserId)
+      // can read, mark it read, or delete it, but can't create one for themselves.
+      allow read, update: if signedIn() && resource.data.forUserId == request.auth.uid;
+      allow delete: if signedIn() && (resource.data.forUserId == request.auth.uid || resource.data.fromUserId == request.auth.uid);
+      allow create: if isApprovedMember() && request.resource.data.fromUserId == request.auth.uid
+        && request.resource.data.forUserId != request.auth.uid;
+    }
+
     match /digestSubmissions/{submissionId} {
       // Any approved member can post something to go in the weekly digest email.
       // The digest Cloud Function (Admin SDK) marks items included after sending —

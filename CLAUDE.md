@@ -145,6 +145,9 @@ suspecting the boolean logic.
   - `comments` subcollection: text, authorId, authorName, createdAt. Any approved member can add
     one; delete is author-or-admin. Lazy-subscribed only when a viewer expands a post's comment
     section (not eagerly for every post in the feed).
+- **Notification** (`notifications/{id}`): forUserId (recipient), fromUserId, fromUserName, type
+  ('reaction'|'comment'), postId, reactionType (reaction notifs only), textPreview (comment notifs
+  only, first 80 chars), createdAt, read. See "Notifications" below.
 - **DigestSubmission** (`digestSubmissions/{id}`): text, submittedBy, submittedByName,
   includedInDigestAt (null until a real — not test — digest send marks it, via Admin SDK which
   bypasses rules). Any approved member can add one from Events tab → "Add to This Week's Family Email."
@@ -433,6 +436,38 @@ in each case, close button unsubscribed and closed correctly, no new console err
 pre-existing transient reload race already documented above (unrelated to this feature — its
 listener doesn't start until the modal is actually opened).
 
+## Notifications
+
+A 🔔 bell in the header (unread-count badge) opens a list of who reacted to or commented on
+your Wall posts — including thread activity (someone commenting on a post you'd already
+commented on, not just the post's original author).
+
+- **Reaction notifications** use a deterministic doc id (`reaction_{postId}_{fromUserId}`, see
+  `notifDocId()`) instead of an auto-generated one: switching your reaction overwrites the same
+  notification (`notifyReaction()`, called from `setReaction()`) rather than piling up duplicates,
+  and removing your reaction entirely deletes it outright (`clearReactionNotif()`) instead of
+  leaving a stale "reacted" entry behind.
+- **Comment notifications** use a normal auto-generated id — every comment is a distinct event,
+  unlike a reaction which only has one current state per person. `notifyComment()` notifies the
+  post's author plus everyone who's already commented on the thread (queried fresh at comment
+  time), excluding the commenter themself and de-duplicated via a `Set`.
+- Both helpers skip creating a notification entirely when the recipient would be the actor
+  themselves (no self-notify for reacting to or commenting on your own post).
+- `initNotifications()` subscribes to `where('forUserId','==', currentUser.uid)` — a single
+  equality filter, no `orderBy`, sorted client-side for the same avoided-composite-index reason
+  documented elsewhere in this file — alongside the app's other `init*()` calls once the shell
+  is ready, and unsubscribes in `cleanupListeners()` like every other listener.
+- `firestore.rules`' `notifications` match block is deliberately asymmetric: the **actor**
+  (`fromUserId`) can create a notification for someone else (never themselves — `forUserId !=
+  request.auth.uid` is enforced server-side too) and can later delete it (needed for reaction
+  removal); the **recipient** (`forUserId`) can read, mark-as-read, or delete it, but can never
+  create one addressed to themselves. Verified against the emulator: Bob reacting/commenting on
+  Alice's post correctly produced her notifications and live-updated her unread badge; Bob
+  un-reacting correctly deleted the reaction notification while the separate comment notification
+  stayed; clicking a notification correctly flipped it to read and dropped the badge count; and
+  two adversarial writes — impersonating a different `fromUserId`, and a self-addressed
+  `forUserId == fromUserId` notification — were both correctly denied.
+
 ## Roles & Privacy
 
 - **Admin**: approve members/friends, manage households/branches, generate invite codes, full visibility,
@@ -469,8 +504,9 @@ functional Wall Reactions/Comment/Share across all 9 theme Wall layouts, with si
 Facebook-style reaction types (see "Theme System" section above and Data Model below),
 a Family Tree view
 (Branch → Household → Person grouping — see "Family Tree" section above),
-and tap-to-open profile pages from anywhere a person shows up (see "Profile
-pages" section above).
+tap-to-open profile pages from anywhere a person shows up (see "Profile
+pages" section above), and a notifications bell for reactions/comments on your
+posts (see "Notifications" section above).
 
 **Deferred:** native app wrapper,
 deactivating a real account holder's login (vs. the deceased-toggle already
