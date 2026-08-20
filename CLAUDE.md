@@ -88,7 +88,9 @@ suspecting the boolean logic.
 ## Data Model
 
 - **User** (`users/{uid}`): name, email, phone, birthdate (age shown publicly only if ≤21),
-  role (member/friend/admin), status (pending/approved), householdId, inviteCodeUsed
+  photoUrl (profile picture, Storage path `avatars/{fileName}`; falls back to a deterministic
+  colored initials circle everywhere via `avatarHtml()` when not set), role (member/friend/admin),
+  status (pending/approved), householdId, inviteCodeUsed
 - **Household** (`households/{id}`): name, memberIds[], responderId (RSVPs/edits for the household),
   phone, address, anniversary, extraContacts[] ({id, name, birthdate, phone, email} — family members
   with no account of their own, e.g. young kids or relatives who'll never sign up)
@@ -133,10 +135,15 @@ suspecting the boolean logic.
 - **Post** (`posts/{id}`): text, photoUrl, photoStoragePath (both null if text-only), authorId,
   authorName, createdAt, audience ('everyone'|'custom'), invitedHouseholdIds[], invitedBranchIds[],
   invitedUserIds[] — same shape and same addressing-not-access-control tradeoff as Event audience
-  (see that entry above). The Family Wall (Photos tab, labeled 🧱 Wall in nav) — direct text+photo
-  posting to the family (or a chosen household/branch/individual subset, shown as "Posted to: ..."
-  on the card), no album required. This is the primary photo-sharing path now; Albums are
-  secondary/curated, reachable via "Show organized albums."
+  (see that entry above). likedBy[] (uids — any approved member can toggle themselves in/out via a
+  Firestore rule scoped to `diff().affectedKeys().hasOnly(['likedBy'])`, so liking someone else's
+  post can't be used to sneak in an edit to the text/photo). The Family Wall (Photos tab, labeled
+  🧱 Wall in nav) — direct text+photo posting to the family (or a chosen household/branch/individual
+  subset, shown as "Posted to: ..." on the card), no album required. This is the primary
+  photo-sharing path now; Albums are secondary/curated, reachable via "Show organized albums."
+  - `comments` subcollection: text, authorId, authorName, createdAt. Any approved member can add
+    one; delete is author-or-admin. Lazy-subscribed only when a viewer expands a post's comment
+    section (not eagerly for every post in the feed).
 - **DigestSubmission** (`digestSubmissions/{id}`): text, submittedBy, submittedByName,
   includedInDigestAt (null until a real — not test — digest send marks it, via Admin SDK which
   bypasses rules). Any approved member can add one from Events tab → "Add to This Week's Family Email."
@@ -309,16 +316,19 @@ own), DM channels (genuinely private, not just UI-hidden — see the Firestore
 rules gotcha above), weekly digest email (Cloud Functions — see section above),
 multi-admin role management, admin Dashboard (live counts + estimated costs),
 11-preset theme system with personal/family-default resolution, admin custom
-theme editor, header banner photo filmstrip, and potluck-style event sign-up
-lists (see "Theme System" section above and Data Model below).
+theme editor, header banner photo filmstrip, potluck-style event sign-up
+lists, auto-approval on a known email match (verified live in production),
+profile pictures (`avatarHtml()` — real photo or a deterministic colored
+initials circle, used everywhere a person shows up: Contacts, chat, Wall),
+and functional Wall Like/Comments on Facebook Blue + the default card layout
+(see "Theme System" section above and Data Model below).
 
 **Deferred:** family tree view, native app wrapper,
 deactivating a real account holder's login (vs. the deceased-toggle already
-built for no-account extraContacts), functional Wall reactions/comments (Facebook
-Blue's Like/Comment/Share row is decorative only — no `likedBy` field or comments
-subcollection exists yet), profile pictures (members currently only get initials
-avatars on Facebook Blue's Wall posts — no photo-upload field on the user doc,
-no avatar shown anywhere else in the app: Contacts rows, DMs, other Wall themes).
+built for no-account extraContacts), Wall Like/Comments on the other 6 bespoke
+theme layouts (log-line, grid, corkboard, guestbook, sticker, timeline —
+currently only Facebook Blue and the default/Neon card layout show reactions),
+Share on Wall posts still decorative-only in Facebook Blue's action row.
 
 ## Working Style / Preferences
 
