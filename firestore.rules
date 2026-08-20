@@ -53,11 +53,27 @@ service cloud.firestore {
     match /households/{householdId} {
       allow read: if isApprovedMember();
       allow write: if isAdmin() || (isApprovedMember() && request.auth.uid == resource.data.responderId);
+      // Self-service join/leave: any approved member can add or remove ONLY themselves
+      // in/out of memberIds — nothing else about the household, and nobody else's
+      // membership, can change via this path. Removing the caller's own uid from both
+      // the old and new lists must leave them identical, or the write is denied.
+      allow update: if isApprovedMember() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberIds']) &&
+        resource.data.memberIds.toSet().difference([request.auth.uid].toSet()) ==
+          request.resource.data.memberIds.toSet().difference([request.auth.uid].toSet());
     }
 
     match /branches/{branchId} {
       allow read: if isApprovedMember();
       allow write: if isAdmin();
+      // Self-service: a household's responder can add or remove ONLY their own household
+      // in/out of a branch's householdIds — same pattern as household self-join above.
+      allow update: if isApprovedMember() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['householdIds']) &&
+        me().householdId != null &&
+        get(/databases/$(database)/documents/households/$(me().householdId)).data.responderId == request.auth.uid &&
+        resource.data.householdIds.toSet().difference([me().householdId].toSet()) ==
+          request.resource.data.householdIds.toSet().difference([me().householdId].toSet());
     }
 
     match /digestSubmissions/{submissionId} {

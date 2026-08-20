@@ -650,6 +650,10 @@
       </div>
       <div class="field"><label>Phone</label><input type="tel" id="epPhone" placeholder="(555) 555-5555"></div>
       <div class="field"><label>Birthdate (shows age publicly only if 21 or under)</label><input type="date" id="epBirthdate"></div>
+      <div class="field"><label>Household</label>
+        <select id="epHousehold"></select>
+        <div class="hh" id="epHouseholdNote" style="margin-top:4px"></div>
+      </div>
       <button class="btn" id="epSaveBtn">Save</button>
       <button class="btn secondary" id="epCancelBtn">Cancel</button>
     </div>
@@ -1475,12 +1479,18 @@ function renderMyHousehold() {
     </div>`;
   }).join('') || '<div class="hh">None yet</div>';
 
+  const branchOptions = branches.map(b => {
+    const checked = (b.householdIds || []).includes(hh.id) ? 'checked' : '';
+    return `<label class="chk"><input type="checkbox" class="mhBranchChk" value="${b.id}" ${checked}> 🌳 ${escapeHtml(b.name)}</label>`;
+  }).join('') || '<span class="hh">No groups set up yet — an admin creates these in Admin → Branches, then any household can join one here.</span>';
+
   body.innerHTML = `
     <div class="field"><label>Household name</label><input type="text" id="mhName" value="${escapeHtml(hh.name || '')}"></div>
     <div class="field"><label>Household phone</label><input type="tel" id="mhPhone" value="${escapeHtml(hh.phone || '')}"></div>
     <div class="field"><label>Household address</label><input type="text" id="mhAddress" value="${escapeHtml(hh.address || '')}"></div>
     <div class="field"><label>Anniversary</label><input type="date" id="mhAnniversary" value="${hh.anniversary || ''}"></div>
     <div class="field"><label>Responds for household</label><select id="mhResponder">${responderOptions}</select></div>
+    <div class="field"><label>Groups (branches) this household belongs to</label><div class="chkGroup">${branchOptions}</div></div>
     <button class="btn small" id="mhSaveBtn">Save</button>
 
     <div class="ecSection">
@@ -1510,6 +1520,16 @@ function renderMyHousehold() {
       anniversary: $('mhAnniversary').value || null,
       responderId: $('mhResponder').value || hh.responderId
     });
+    // One write per branch whose checked state actually changed — the self-toggle rule
+    // only allows changing THIS household's own presence in a branch, one doc at a time.
+    const checkedBranchIds = new Set(Array.from(body.querySelectorAll('.mhBranchChk:checked')).map(c => c.value));
+    for (const b of branches) {
+      const wasIn = (b.householdIds || []).includes(hh.id);
+      const nowIn = checkedBranchIds.has(b.id);
+      if (wasIn === nowIn) continue;
+      const updated = nowIn ? [...(b.householdIds || []), hh.id] : (b.householdIds || []).filter(id => id !== hh.id);
+      await updateDoc(doc(db, 'branches', b.id), { householdIds: updated });
+    }
   };
   body.querySelectorAll('.mhDelBtn').forEach(btn => {
     btn.onclick = async () => {
@@ -2576,6 +2596,11 @@ function openEditProfile(uid) {
   $('epPhone').value = u.phone || '';
   $('epBirthdate').value = u.birthdate || '';
   $('epAvatarPreview').innerHTML = avatarHtml(u.name, u.photoUrl, 44);
+  const options = households.map(h => `<option value="${h.id}" ${u.householdId === h.id ? 'selected' : ''}>🏠 ${escapeHtml(h.name)}</option>`).join('');
+  $('epHousehold').innerHTML = `<option value="" ${!u.householdId ? 'selected' : ''}>— No household —</option>${options}<option value="__new__">+ Create a new household…</option>`;
+  $('epHouseholdNote').textContent = uid === currentUser.uid
+    ? "Changing this joins/leaves that household for you. Creating a new one makes you its first member and responder."
+    : "Changing this joins/leaves that household on this person's behalf (you're doing this as admin).";
   $('editProfileModalBg').classList.add('open');
 }
 $('epCancelBtn').onclick = () => $('editProfileModalBg').classList.remove('open');
@@ -2691,7 +2716,56 @@ $('epSaveBtn').onclick = async () => {
       return;
     }
   }
-  await updateDoc(doc(db, 'users', _editingUserId), payload);
+  const currentHouseholdId = usersById[_editingUserId] ? usersById[_editingUserId].householdId : null;
+  let targetHouseholdId = $('epHousehold').value || null;
+
+  // Track the new household's *actual* starting member list ourselves rather than trusting
+  // householdsById — if we just created it, the live listener won't have delivered it back
+  // yet, so the cache would read as "unknown" and we'd wrongly skip adding the member.
+  let newHouseholdStartMembers = null;
+
+  if (targetHouseholdId === '__new__') {
+    const name = prompt('New household name:');
+    if (!name || !name.trim()) { $('epHouseholdNote').textContent = 'Household unchanged — no name entered.'; targetHouseholdId = currentHouseholdId; }
+    else {
+      try {
+        const isSelf = _editingUserId === currentUser.uid;
+        newHouseholdStartMembers = isSelf ? [currentUser.uid] : [];
+        const ref = await addDoc(collection(db, 'households'), {
+          name: name.trim(), memberIds: newHouseholdStartMembers,
+          responderId: isSelf ? currentUser.uid : null,
+          phone: '', address: '', anniversary: null, extraContacts: [],
+          createdBy: currentUser.uid, createdAt: serverTimestamp()
+        });
+        targetHouseholdId = ref.id;
+      } catch (err) {
+        $('epHouseholdNote').textContent = 'Could not create household: ' + (err.message || err);
+        return;
+      }
+    }
+  }
+
+  try {
+    const batch = writeBatch(db);
+    if (targetHouseholdId !== currentHouseholdId) {
+      if (currentHouseholdId && householdsById[currentHouseholdId]) {
+        const oldMembers = (householdsById[currentHouseholdId].memberIds || []).filter(id => id !== _editingUserId);
+        batch.update(doc(db, 'households', currentHouseholdId), { memberIds: oldMembers });
+      }
+      if (targetHouseholdId) {
+        const newMembers = newHouseholdStartMembers !== null
+          ? newHouseholdStartMembers
+          : ((householdsById[targetHouseholdId] && householdsById[targetHouseholdId].memberIds) || []);
+        if (!newMembers.includes(_editingUserId)) batch.update(doc(db, 'households', targetHouseholdId), { memberIds: [...newMembers, _editingUserId] });
+      }
+      payload.householdId = targetHouseholdId || null;
+    }
+    batch.update(doc(db, 'users', _editingUserId), payload);
+    await batch.commit();
+  } catch (err) {
+    $('epHouseholdNote').textContent = 'Could not save household change: ' + (err.message || err);
+    return;
+  }
   $('editProfileModalBg').classList.remove('open');
 };
 
