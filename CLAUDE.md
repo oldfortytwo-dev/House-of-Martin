@@ -327,6 +327,33 @@ than re-subscribing everything on every unrelated profile-doc change. Verified w
 emulator signups, including a "sign up and just wait" test that flipped from the pending screen to
 the full shell live and unprompted in under 5 seconds, no refresh.
 
+## Households & Branches — how it actually works
+
+Came up because the model wasn't obvious from using the app — worth re-reading before touching
+this area again, and worth re-explaining to the user if it comes up.
+
+- A **household** is a family unit sharing an address (e.g. "The Alvarez-Martins"). It has
+  members (real accounts), an optional list of no-account family members (`extraContacts`, e.g.
+  young kids), a responder, and shared contact info.
+- A **branch** is a group of *households* (e.g. "Descendants of Grandpa Joe"), not a group of
+  people. You don't join a branch directly — your household does, and you're in it by extension.
+  This is the part that's confusing on first read: there's no "add yourself to a branch" concept
+  at the person level by design, only "which branch(es) does my household belong to."
+- **Everyone can join/leave/create a household themselves**, from the Edit Info modal (their own,
+  or — if admin — anyone's): a Household dropdown lists every household plus "+ Create a new
+  household…". Selecting a different one leaves the old and joins the new in one write; creating
+  one as a non-admin makes you its first member and responder automatically (an admin creating one
+  starts it empty, since there's no "self" to default into it).
+- **Only a household's responder can pick which branch(es) it belongs to** — from Contacts →
+  "Edit My Household" → the branch checklist. This is deliberately at the household level, not
+  the person level, matching the model above.
+- **Regular members can't create/manage branches themselves** — only assign their own household
+  to existing ones. Creating a new branch is still Admin → Branches (an admin-only concept, since
+  a branch groups multiple households together and needs someone with a bird's-eye view).
+- Both of these are genuine self-toggle permissions in `firestore.rules`, not just hidden UI —
+  see the Firestore rules for the exact mechanism (Set-difference check ensuring you can only
+  add/remove *yourself* or *your own household*, never anyone else's membership).
+
 ## Roles & Privacy
 
 - **Admin**: approve members/friends, manage households/branches, generate invite codes, full visibility,
@@ -347,9 +374,11 @@ self/admin-editable birthdate, Family Calendar (birthdays/anniversaries/death
 anniversaries) with contact linking, Share button (native share sheet +
 Facebook/copy fallback), household self-service editing for the responder
 (Contacts tab → "Edit My Household" — phone/address/anniversary/responder
-handoff/extraContacts; member add-remove and moving a contact to a *different*
-household stay admin-only since those touch documents the responder doesn't
-own), DM channels (genuinely private, not just UI-hidden — see the Firestore
+handoff/extraContacts/branch membership), self-service household join/leave/create
+for any member from the Edit Info modal (see "Households & Branches — how it
+actually works" below — moving a no-account extraContact to a *different*
+household stays admin-only, since that touches a household the acting member
+doesn't belong to), DM channels (genuinely private, not just UI-hidden — see the Firestore
 rules gotcha above), weekly digest email (Cloud Functions — see section above),
 multi-admin role management, admin Dashboard (live counts + estimated costs),
 11-preset theme system with personal/family-default resolution, admin custom
