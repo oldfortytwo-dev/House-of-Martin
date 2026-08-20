@@ -155,6 +155,14 @@
   .fbPost .fbHead { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
   .fbAvatar { width: 36px; height: 36px; border-radius: 50%; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; flex-shrink: 0; }
   .fbActions { display: flex; gap: 18px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); font-size: 13px; color: var(--ink-soft); font-weight: 600; }
+  .fbActions button { background: none; border: none; padding: 0; font: inherit; color: inherit; cursor: pointer; }
+  .wallLikeBtn.liked { color: var(--accent); }
+  .wallCommentSection { display: none; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border); }
+  .wallCommentRow { display: flex; align-items: center; gap: 6px; font-size: 13px; padding: 4px 0; }
+  .wallCommentRow .who { font-weight: 700; flex-shrink: 0; }
+  .wallCommentRow .editBtn { margin-left: auto; }
+  .wallCommentForm { display: flex; gap: 6px; margin-top: 6px; }
+  .wallCommentForm .wallCommentInput { flex: 1; padding: 7px 10px; border: 1px solid var(--border); border-radius: 14px; font-size: 13px; }
 
   /* Kraft & Twine Wall: corkboard of pinned index cards, varied tilt */
   .wallCorkboard { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; padding: 6px; }
@@ -621,6 +629,14 @@
   <div class="modalBg" id="editProfileModalBg">
     <div class="modalSheet">
       <h3 id="epName">Edit info</h3>
+      <div class="field"><label>Profile picture</label>
+        <div style="display:flex; align-items:center; gap:10px">
+          <div id="epAvatarPreview"></div>
+          <input type="file" id="epAvatarInput" accept="image/*" style="display:none">
+          <button class="btn small secondary" id="epAvatarBtn" style="width:auto">Change photo</button>
+        </div>
+        <div class="hh" id="epAvatarStatus" style="margin-top:4px"></div>
+      </div>
       <div class="field"><label>Phone</label><input type="tel" id="epPhone" placeholder="(555) 555-5555"></div>
       <div class="field"><label>Birthdate (shows age publicly only if 21 or under)</label><input type="date" id="epBirthdate"></div>
       <button class="btn" id="epSaveBtn">Save</button>
@@ -1036,7 +1052,8 @@ function loadMessages() {
       const m = d.data();
       const div = document.createElement('div');
       div.className = 'msg' + (m.senderId === currentUser.uid ? ' mine' : '');
-      div.innerHTML = `<div class="who">${escapeHtml(m.senderName || '')}</div>${escapeHtml(m.text || '')}`;
+      const senderPhoto = usersById[m.senderId] && usersById[m.senderId].photoUrl;
+      div.innerHTML = `<div class="who">${avatarHtml(m.senderName, senderPhoto, 16)} ${escapeHtml(m.senderName || '')}</div>${escapeHtml(m.text || '')}`;
       list.appendChild(div);
     });
     list.scrollIntoView({ block: 'end' });
@@ -1367,7 +1384,7 @@ function renderContacts() {
     const header = `<div class="hhHeader"><span>${hh ? '🏠 ' + escapeHtml(hh.name) : 'No household set'}</span>${contactLine}</div>`;
     const memberRows = (byHousehold[key] || []).map(u => `
       <div class="contactRow">
-        <div><div class="nm">${escapeHtml(u.name)}${hh && hh.responderId === u.id ? '<span class="respBadge">responder</span>' : ''}${ageBadgeHtml(u)}${canEditProfile(u.id) ? `<button class="editBtn" data-uid="${u.id}">✎</button>` : ''}${u.id !== currentUser.uid ? `<button class="editBtn dmBtn" data-uid="${u.id}" title="Message">💬</button>` : ''}</div></div>
+        <div style="display:flex; align-items:center; gap:8px">${avatarHtml(u.name, u.photoUrl, 32)}<div class="nm">${escapeHtml(u.name)}${hh && hh.responderId === u.id ? '<span class="respBadge">responder</span>' : ''}${ageBadgeHtml(u)}${canEditProfile(u.id) ? `<button class="editBtn" data-uid="${u.id}">✎</button>` : ''}${u.id !== currentUser.uid ? `<button class="editBtn dmBtn" data-uid="${u.id}" title="Message">💬</button>` : ''}</div></div>
         <div class="info">${escapeHtml(u.email || '')}${u.phone ? '<br>' + escapeHtml(u.phone) : ''}</div>
       </div>`).join('');
     const extraRows = ((hh && hh.extraContacts) || []).map(ec => `
@@ -1659,20 +1676,22 @@ function renderWallFeed(snap) {
         const p = d.data();
         const canDelete = p.authorId === currentUser.uid || myDoc.role === 'admin';
         const when = p.createdAt && p.createdAt.toDate ? p.createdAt.toDate().toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '';
-        const initials = (p.authorName || '?').trim().split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase();
+        const authorPhoto = usersById[p.authorId] && usersById[p.authorId].photoUrl;
         const card = document.createElement('div');
         card.className = 'card wallPost fbPost';
         card.innerHTML = `
           ${canDelete ? `<button class="editBtn wallDel" data-id="${d.id}">✕</button>` : ''}
-          <div class="fbHead"><div class="fbAvatar">${escapeHtml(initials)}</div>
+          <div class="fbHead">${avatarHtml(p.authorName, authorPhoto, 36)}
             <div><div class="who">${escapeHtml(p.authorName || '')}</div><div class="when">${when}${p.audience && p.audience !== 'everyone' ? ' · ' + escapeHtml(describeAudience(p)) : ''}</div></div>
           </div>
           ${p.text ? `<div class="txt">${escapeHtml(p.text)}</div>` : ''}
           ${p.photoUrl ? `<img src="${p.photoUrl}" alt="">` : ''}
-          <div class="fbActions"><span>👍 Like</span><span>💬 Comment</span><span>↗ Share</span></div>
+          <div class="fbActions">${likeButtonHtml(p, 'Like')}<button class="wallCommentToggle">💬 Comment</button><span>↗ Share</span></div>
+          ${commentSectionHtml()}
         `;
         if (p.photoUrl) card.querySelector('img').onclick = () => window.open(p.photoUrl, '_blank');
         if (canDelete) card.querySelector('.wallDel').onclick = wallDeleteHandler(d.id, p.photoStoragePath);
+        wireLikeAndComments(card, d.id, p);
         wrap.appendChild(card);
       });
       return;
@@ -1786,18 +1805,85 @@ function renderWallFeed(snap) {
 function buildDefaultWallCard(id, p) {
   const canDelete = p.authorId === currentUser.uid || myDoc.role === 'admin';
   const when = p.createdAt && p.createdAt.toDate ? p.createdAt.toDate().toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '';
+  const authorPhoto = usersById[p.authorId] && usersById[p.authorId].photoUrl;
   const card = document.createElement('div');
   card.className = 'card wallPost';
   card.innerHTML = `
     ${canDelete ? `<button class="editBtn wallDel" data-id="${id}">✕</button>` : ''}
-    <div class="who">${escapeHtml(p.authorName || '')}</div>
+    <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px">${avatarHtml(p.authorName, authorPhoto, 32)}<div class="who">${escapeHtml(p.authorName || '')}</div></div>
     <div class="when">${when}${p.audience && p.audience !== 'everyone' ? ' · Posted to: ' + escapeHtml(describeAudience(p)) : ''}</div>
     ${p.text ? `<div class="txt">${escapeHtml(p.text)}</div>` : ''}
     ${p.photoUrl ? `<img src="${p.photoUrl}" alt="">` : ''}
+    <div class="fbActions">${likeButtonHtml(p, 'Like')}<button class="wallCommentToggle">💬 Comment</button></div>
+    ${commentSectionHtml()}
   `;
   if (p.photoUrl) card.querySelector('img').onclick = () => window.open(p.photoUrl, '_blank');
   if (canDelete) card.querySelector('.wallDel').onclick = wallDeleteHandler(id, p.photoStoragePath);
+  wireLikeAndComments(card, id, p);
   return card;
+}
+
+// ---------- Wall reactions (Like + Comments) — shared across every theme's Wall renderer ----------
+function likeButtonHtml(p, label) {
+  const liked = (p.likedBy || []).includes(currentUser.uid);
+  const count = (p.likedBy || []).length;
+  return `<button class="wallLikeBtn${liked ? ' liked' : ''}">${liked ? '❤️' : '🤍'} ${escapeHtml(label)}${count ? ' (' + count + ')' : ''}</button>`;
+}
+
+function commentSectionHtml() {
+  return `<div class="wallCommentSection" style="display:none">
+    <div class="wallCommentList"></div>
+    <div class="wallCommentForm">
+      <input type="text" class="wallCommentInput" placeholder="Write a comment…">
+      <button class="btn small wallCommentSend" style="width:auto">Send</button>
+    </div>
+  </div>`;
+}
+
+async function toggleLike(postId, currentLikedBy) {
+  const liked = (currentLikedBy || []).includes(currentUser.uid);
+  const updated = liked ? (currentLikedBy || []).filter(u => u !== currentUser.uid) : [...(currentLikedBy || []), currentUser.uid];
+  await updateDoc(doc(db, 'posts', postId), { likedBy: updated });
+}
+
+function wireLikeAndComments(card, postId, p) {
+  const likeBtn = card.querySelector('.wallLikeBtn');
+  if (likeBtn) likeBtn.onclick = () => toggleLike(postId, p.likedBy || []);
+
+  const toggle = card.querySelector('.wallCommentToggle');
+  const section = card.querySelector('.wallCommentSection');
+  if (!toggle || !section) return;
+
+  let subscribed = false;
+  toggle.onclick = () => {
+    const showing = section.style.display !== 'none';
+    section.style.display = showing ? 'none' : 'block';
+    if (!showing && !subscribed) {
+      subscribed = true;
+      onSnapshot(query(collection(db, 'posts', postId, 'comments'), orderBy('createdAt', 'asc')), (csnap) => {
+        const list = section.querySelector('.wallCommentList');
+        list.innerHTML = csnap.docs.map(cd => {
+          const c = cd.data();
+          const canDel = c.authorId === currentUser.uid || myDoc.role === 'admin';
+          const cPhoto = usersById[c.authorId] && usersById[c.authorId].photoUrl;
+          return `<div class="wallCommentRow">${avatarHtml(c.authorName, cPhoto, 20)}<span class="who">${escapeHtml(c.authorName || '')}</span> ${escapeHtml(c.text || '')}${canDel ? `<button class="editBtn wallCommentDel" data-id="${cd.id}">✕</button>` : ''}</div>`;
+        }).join('') || '<div class="hh">No comments yet.</div>';
+        list.querySelectorAll('.wallCommentDel').forEach(btn => {
+          btn.onclick = async () => { await deleteDoc(doc(db, 'posts', postId, 'comments', btn.dataset.id)); };
+        });
+      });
+    }
+  };
+  const input = section.querySelector('.wallCommentInput');
+  const send = section.querySelector('.wallCommentSend');
+  const doSend = async () => {
+    const text = input.value.trim();
+    if (!text) return;
+    input.value = '';
+    await addDoc(collection(db, 'posts', postId, 'comments'), { text, authorId: currentUser.uid, authorName: myDoc.name, createdAt: serverTimestamp() });
+  };
+  send.onclick = doSend;
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') doSend(); });
 }
 
 $('wallAddPhotoBtn').onclick = () => $('wallPhotoInput').click();
@@ -2401,22 +2487,47 @@ $('sendDigestNowBtn').onclick = async () => {
 
 // ---------- Profile editing (own info, or any member's if admin) ----------
 let _editingUserId = null;
+let _editingAvatarFile = null;
 function openEditProfile(uid) {
   const u = usersById[uid];
   if (!u) return;
   _editingUserId = uid;
+  _editingAvatarFile = null;
+  $('epAvatarStatus').textContent = '';
   $('epName').textContent = `Edit ${u.name}'s info`;
   $('epPhone').value = u.phone || '';
   $('epBirthdate').value = u.birthdate || '';
+  $('epAvatarPreview').innerHTML = avatarHtml(u.name, u.photoUrl, 44);
   $('editProfileModalBg').classList.add('open');
 }
 $('epCancelBtn').onclick = () => $('editProfileModalBg').classList.remove('open');
+$('epAvatarBtn').onclick = () => $('epAvatarInput').click();
+$('epAvatarInput').addEventListener('change', (e) => {
+  _editingAvatarFile = e.target.files[0] || null;
+  if (_editingAvatarFile) {
+    $('epAvatarPreview').innerHTML = `<img src="${URL.createObjectURL(_editingAvatarFile)}" alt="" style="width:44px; height:44px; border-radius:50%; object-fit:cover">`;
+    $('epAvatarStatus').textContent = _editingAvatarFile.name;
+  }
+});
 $('epSaveBtn').onclick = async () => {
   if (!_editingUserId) return;
-  await updateDoc(doc(db, 'users', _editingUserId), {
+  const payload = {
     phone: $('epPhone').value.trim(),
     birthdate: $('epBirthdate').value || null
-  });
+  };
+  if (_editingAvatarFile) {
+    $('epAvatarStatus').textContent = 'Uploading photo…';
+    try {
+      const storagePath = `avatars/${_editingUserId}_${Date.now()}_${_editingAvatarFile.name}`;
+      const sRef = ref(storage, storagePath);
+      await uploadBytes(sRef, _editingAvatarFile, { customMetadata: { uploaderId: currentUser.uid } });
+      payload.photoUrl = await getDownloadURL(sRef);
+    } catch (err) {
+      $('epAvatarStatus').textContent = 'Photo upload failed: ' + (err.message || err);
+      return;
+    }
+  }
+  await updateDoc(doc(db, 'users', _editingUserId), payload);
   $('editProfileModalBg').classList.remove('open');
 };
 
@@ -2953,6 +3064,27 @@ function ageBadgeHtml(u) {
 }
 function canEditProfile(uid) {
   return uid === currentUser.uid || (myDoc && myDoc.role === 'admin');
+}
+
+const AVATAR_COLORS = ['#a9432f', '#1877f2', '#5b8c3e', '#8e44ad', '#d4af6a', '#c0392b', '#2c8c8c'];
+function avatarColorFor(name) {
+  const s = String(name || '?');
+  let hash = 0;
+  for (let i = 0; i < s.length; i++) hash = (hash * 31 + s.charCodeAt(i)) >>> 0;
+  return AVATAR_COLORS[hash % AVATAR_COLORS.length];
+}
+function initialsFor(name) {
+  return (name || '?').trim().split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase() || '?';
+}
+// Reused everywhere a person needs a small round avatar: Contacts rows, Wall posts/comments,
+// messages. Falls back to a colored initials circle (deterministic color per name) when no
+// photo has been uploaded — never a broken-image icon or blank space.
+function avatarHtml(name, photoUrl, size) {
+  const px = size || 32;
+  if (photoUrl) {
+    return `<img src="${photoUrl}" alt="" style="width:${px}px; height:${px}px; border-radius:50%; object-fit:cover; flex-shrink:0; vertical-align:middle">`;
+  }
+  return `<span style="display:inline-flex; align-items:center; justify-content:center; width:${px}px; height:${px}px; border-radius:50%; background:${avatarColorFor(name)}; color:#fff; font-weight:700; font-size:${Math.round(px * 0.4)}px; flex-shrink:0; vertical-align:middle">${escapeHtml(initialsFor(name))}</span>`;
 }
 
 // ---------- Share (native share sheet, or Facebook/copy fallback) ----------

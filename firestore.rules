@@ -159,7 +159,17 @@ service cloud.firestore {
       // a broad collection query without reworking every query to be provably scoped).
       allow read: if isApprovedMember();
       allow create: if isApprovedMember() && request.resource.data.authorId == request.auth.uid;
-      allow update, delete: if isAdmin() || (signedIn() && resource.data.authorId == request.auth.uid);
+      // Any approved member can update ONLY the likedBy field (a Like toggle) on someone
+      // else's post; everything else (edit text, delete) stays author/admin-only.
+      allow update: if isAdmin() || (signedIn() && resource.data.authorId == request.auth.uid) ||
+        (isApprovedMember() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likedBy']));
+      allow delete: if isAdmin() || (signedIn() && resource.data.authorId == request.auth.uid);
+
+      match /comments/{commentId} {
+        allow read: if isApprovedMember();
+        allow create: if isApprovedMember() && request.resource.data.authorId == request.auth.uid;
+        allow delete: if isAdmin() || (signedIn() && resource.data.authorId == request.auth.uid);
+      }
     }
   }
 }
