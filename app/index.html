@@ -238,6 +238,25 @@
   #cropViewport { position: relative; width: 260px; height: 260px; margin: 0 auto; overflow: hidden; background: #000; border-radius: 8px; touch-action: none; }
   #cropImg { position: absolute; top: 0; left: 0; transform-origin: 0 0; cursor: grab; user-select: none; -webkit-user-drag: none; max-width: none; }
   #cropCircleGuide { position: absolute; inset: 0; border-radius: 50%; box-shadow: 0 0 0 9999px rgba(0,0,0,.6); border: 2px solid #fff; pointer-events: none; }
+
+  /* Family Tree — nested outline with classic CSS org-chart connector lines */
+  .treeList, .treeList ul { list-style: none; margin: 0; padding-left: 22px; }
+  #treeBody > .treeList { padding-left: 0; }
+  .treeList li { position: relative; padding: 6px 0 6px 20px; }
+  .treeList li::before {
+    content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 1px; background: var(--border);
+  }
+  .treeList li::after {
+    content: ''; position: absolute; left: 0; top: 20px; width: 16px; height: 1px; background: var(--border);
+  }
+  .treeList li:last-child::before { bottom: auto; height: 20px; }
+  #treeBody > .treeList > li { padding-left: 0; }
+  #treeBody > .treeList > li::before, #treeBody > .treeList > li::after { display: none; }
+  .treeNode { display: flex; align-items: center; gap: 8px; }
+  .treeNode.branch { font-family: var(--font-heading); font-weight: 700; font-size: 16px; color: var(--accent); margin-bottom: 4px; }
+  .treeNode.household { font-weight: 700; font-size: 14.5px; }
+  .treeNode.person { font-size: 14px; }
+  .treeMeta { font-size: 12px; color: var(--ink-soft); }
   .btn { display: inline-block; width: 100%; padding: 13px; border: none; border-radius: var(--radius); background: var(--accent); color: #fff; font-size: 16px; font-weight: 600; cursor: pointer; margin-top: 6px; font-family: var(--font-body); }
   .btn.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
   .btn.small { width: auto; padding: 8px 14px; font-size: 14px; }
@@ -429,8 +448,19 @@
           <h3 style="margin-top:0">🏠 Edit My Household</h3>
           <div id="myHouseholdBody"></div>
         </div>
+        <button class="btn small secondary" id="openTreeBtn" style="margin-bottom:10px">🌳 View Family Tree</button>
         <div class="card" id="contactList"></div>
       </section>
+
+      <!-- Family Tree modal -->
+      <div class="modalBg" id="treeModalBg">
+        <div class="modalSheet">
+          <h3 style="margin-top:0">🌳 Family Tree</h3>
+          <p class="hh">Branches, households, and the people in them — grouped by how the family's set up in the app, not by parent/child lineage (we don't track that yet).</p>
+          <div id="treeBody"></div>
+          <button class="btn secondary" id="treeCloseBtn" style="margin-top:14px">Close</button>
+        </div>
+      </div>
 
       <!-- Calendar -->
       <section class="tabpane" id="pane-calendar">
@@ -1439,6 +1469,56 @@ function renderContacts() {
   wrap.querySelectorAll('.editBtn:not(.dmBtn)').forEach(b => { b.onclick = () => openEditProfile(b.dataset.uid); });
   wrap.querySelectorAll('.dmBtn').forEach(b => { b.onclick = () => startDM(b.dataset.uid); });
 }
+
+// ---------- Family Tree (Branch -> Household -> Person, from existing grouping data —
+// not a genealogical parent/child/spouse chart, since we don't collect that relationship
+// data anywhere) ----------
+function personNodeHtml(u) {
+  return `<li><div class="treeNode person">${avatarHtml(u.name, u.photoUrl, 22)}<span>${escapeHtml(u.name)}</span>${ageBadgeHtml(u)}</div></li>`;
+}
+function extraContactNodeHtml(ec) {
+  return `<li><div class="treeNode person">${avatarHtml(ec.name, null, 22)}<span>${escapeHtml(ec.name)}${ec.deceased ? ' 🕊' : ''}</span>${ageBadgeHtml(ec)}<span class="treeMeta">no account</span></div></li>`;
+}
+function householdNodeHtml(hh) {
+  const memberItems = (hh.memberIds || []).map(uid => usersById[uid]).filter(Boolean).map(personNodeHtml).join('');
+  const extraItems = (hh.extraContacts || []).map(extraContactNodeHtml).join('');
+  const count = (hh.memberIds || []).length + (hh.extraContacts || []).length;
+  return `<li>
+    <div class="treeNode household">🏠 ${escapeHtml(hh.name)} <span class="treeMeta">(${count} ${count === 1 ? 'person' : 'people'})</span></div>
+    ${memberItems || extraItems ? `<ul class="treeList">${memberItems}${extraItems}</ul>` : ''}
+  </li>`;
+}
+
+function renderFamilyTree() {
+  const groupedHouseholdIds = new Set();
+  branches.forEach(b => (b.householdIds || []).forEach(id => groupedHouseholdIds.add(id)));
+
+  const branchSections = branches.map(b => {
+    const hhs = (b.householdIds || []).map(id => householdsById[id]).filter(Boolean);
+    return `<li>
+      <div class="treeNode branch">🌳 ${escapeHtml(b.name)} <span class="treeMeta">(${hhs.length} household${hhs.length === 1 ? '' : 's'})</span></div>
+      ${hhs.length ? `<ul class="treeList">${hhs.map(householdNodeHtml).join('')}</ul>` : '<div class="treeMeta" style="margin-left:22px">No households in this group yet.</div>'}
+    </li>`;
+  }).join('');
+
+  const ungrouped = households.filter(h => !groupedHouseholdIds.has(h.id));
+  const ungroupedSection = ungrouped.length ? `<li>
+    <div class="treeNode branch">— Not in any group —</div>
+    <ul class="treeList">${ungrouped.map(householdNodeHtml).join('')}</ul>
+  </li>` : '';
+
+  const noHouseholdUsers = allApprovedUsers.filter(u => !u.householdId);
+  const noHouseholdSection = noHouseholdUsers.length ? `<li>
+    <div class="treeNode branch">— No household —</div>
+    <ul class="treeList">${noHouseholdUsers.map(personNodeHtml).join('')}</ul>
+  </li>` : '';
+
+  const body = branchSections + ungroupedSection + noHouseholdSection;
+  $('treeBody').innerHTML = body ? `<ul class="treeList">${body}</ul>` : '<div class="empty">Nothing to show yet — create a household or two first.</div>';
+}
+
+$('openTreeBtn').onclick = () => { renderFamilyTree(); $('treeModalBg').classList.add('open'); };
+$('treeCloseBtn').onclick = () => $('treeModalBg').classList.remove('open');
 
 // ---------- Household self-service (responder edits their own household) ----------
 let myHouseholdEcState = {}; // extraContact id -> 'edit' | undefined

@@ -354,6 +354,28 @@ this area again, and worth re-explaining to the user if it comes up.
   see the Firestore rules for the exact mechanism (Set-difference check ensuring you can only
   add/remove *yourself* or *your own household*, never anyone else's membership).
 
+## Family Tree
+
+Contacts tab → "🌳 View Family Tree" (`#openTreeBtn`/`#treeModalBg`). A pure client-side
+render of already-live-synced data (`branches`/`households`/`householdsById`/`usersById`/
+`allApprovedUsers`) — no new Firestore reads, writes, or rules. Three sections, in order:
+branches with their households (and each household's members + `extraContacts`, tagged "no
+account") nested inside via a classic nested-`<ul>`/connector-line CSS treatment
+(`renderFamilyTree()`/`householdNodeHtml()`/`personNodeHtml()`/`extraContactNodeHtml()`); any
+household not in a branch, under "— Not in any group —"; any approved member with no
+household, under "— No household —".
+
+**Scoped deliberately as a Branch → Household → Person grouping view, not a genealogical
+chart** — there's no parent/child/spouse/sibling relationship data anywhere in the data
+model to draw actual lineage lines from. If a real family tree (who's whose parent, married
+to whom, etc.) is wanted later, that needs new fields on User/extraContacts and is a
+materially bigger feature, not an extension of this one.
+
+Verified against the emulator: a branch containing one household (with 2 real members + 1
+`extraContacts` no-account entry) rendered nested correctly with the right counts; a second,
+unrelated household correctly fell into "Not in any group"; a third seeded user with no
+`householdId` correctly fell into "No household"; open/close both worked; no console errors.
+
 ## Roles & Privacy
 
 - **Admin**: approve members/friends, manage households/branches, generate invite codes, full visibility,
@@ -386,10 +408,11 @@ theme editor, header banner photo filmstrip, potluck-style event sign-up
 lists, auto-approval on a known email match (verified live in production),
 profile pictures (`avatarHtml()` — real photo or a deterministic colored
 initials circle, used everywhere a person shows up: Contacts, chat, Wall),
-and functional Wall Like/Comment/Share across all 9 theme Wall layouts (see
-"Theme System" section above and Data Model below).
+functional Wall Like/Comment/Share across all 9 theme Wall layouts (see
+"Theme System" section above and Data Model below), and a Family Tree view
+(Branch → Household → Person grouping — see "Family Tree" section above).
 
-**Deferred:** family tree view, native app wrapper,
+**Deferred:** native app wrapper,
 deactivating a real account holder's login (vs. the deceased-toggle already
 built for no-account extraContacts).
 
