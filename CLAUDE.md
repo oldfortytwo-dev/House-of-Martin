@@ -92,9 +92,10 @@ suspecting the boolean logic.
   photoUrl (profile picture, Storage path `avatars/{fileName}`; falls back to a deterministic
   colored initials circle everywhere via `avatarHtml()` when not set — selecting a photo in the
   Edit Info modal opens a crop/zoom tool first, see "Photo crop tool" below, rather than uploading
-  the raw file), role (member/friend/admin), status (pending/approved), householdId, inviteCodeUsed,
-  pushSubscriptions[] ({endpoint, keys:{p256dh,auth}} — one per device/browser with push
-  notifications enabled, see "Push notifications" below)
+  the raw file), role (member/friend/admin), status (pending/approved/deactivated — see "Account
+  deactivation" below), householdId, inviteCodeUsed, deactivatedAt (null unless status is
+  'deactivated'), pushSubscriptions[] ({endpoint, keys:{p256dh,auth}} — one per device/browser
+  with push notifications enabled, see "Push notifications" below)
 - **Household** (`households/{id}`): name, memberIds[], responderId (RSVPs/edits for the household),
   phone, address, anniversary, extraContacts[] ({id, name, birthdate, phone, email} — family members
   with no account of their own, e.g. young kids or relatives who'll never sign up)
@@ -540,6 +541,48 @@ Firebase Console (see rationale below).
   grant the browser permission prompt, and confirm a real reaction/comment from someone else
   produces an actual OS-level notification.
 
+## Account deactivation
+
+Admin-only, from Contacts → 🚫 next to anyone but yourself (self-deactivation is hidden in the
+UI, same "have a different admin do it" precedent as self-demoting your own admin role).
+Reactivate from Admin → 🚫 Deactivated accounts.
+
+- **A third `users/{uid}.status` value, `'deactivated'`**, alongside `'pending'`/`'approved'`.
+  **No `firestore.rules` change was needed at all** — `isApprovedMember()`/`isAdmin()` already
+  require `status == 'approved'`, so flipping status to anything else instantly cuts the account
+  out of every single rule that gates on those two helpers (posts, channels, households, wall,
+  reactions, notifications, all of it) — deactivating an admin revokes their admin powers too,
+  immediately, not just their member-level access. The existing `users/{userId}` update rule
+  already restricted `status`/`role` changes to admins only, so only an admin can deactivate or
+  reactivate anyone in the first place.
+- **History is never touched.** Deactivating doesn't delete or hide the account's past posts,
+  comments, messages, or household membership — matches this project's general "don't destroy
+  data" posture (see e.g. the mode-reset behavior in the sibling `auggies-deploy` project for the
+  same philosophy elsewhere). An admin can separately edit the household/reassign responder if
+  that's actually wanted.
+- **A deactivated account can always read its own `users/{uid}` doc** (the `request.auth.uid ==
+  userId` clause in the read rule doesn't check status), which is what makes the block instant
+  and live rather than something that only takes effect on next login: the app's `onAuthStateChanged`
+  handler keeps a permanent `onSnapshot` on the signed-in user's own doc (same listener that made
+  auto-approval "instant" — see that section above), so an admin deactivating someone mid-session
+  flips them straight to a blocked screen in real time, no refresh needed, and correctly tears
+  down every other listener (`cleanupListeners()`) at that moment too — otherwise they'd keep
+  running against data the rules no longer allow, throwing a stream of permission-denied errors
+  instead of cleanly stopping.
+- The blocked screen (`#pendingScreen`) now shows one of two messages depending on `status` —
+  the original "You're on the list 🎉 ... check back soon" for `'pending'`, or "Account
+  deactivated ... reach out to [an admin] directly" for `'deactivated'` — so a deactivated member
+  isn't confusingly told to "check back soon" as if they were a brand-new unapproved signup.
+- Verified against the emulator: a fresh sign-in as an already-deactivated account correctly shows
+  the deactivated screen; deactivating someone with their session already open correctly flips
+  them live with no reload and only one harmless race-condition console error (not the
+  continuous-error spam it'd be without the `cleanupListeners()` call); the Admin →
+  Deactivated-accounts list correctly showed the account with its deactivation date, and
+  Reactivate correctly restored `status: 'approved'` live; three adversarial writes — a non-admin
+  deactivating someone else, a non-admin reactivating someone else, and a non-admin
+  self-deactivating — were all correctly denied by the pre-existing rule (no rule changes were
+  made, so this also served as regression coverage for it).
+
 ## Roles & Privacy
 
 - **Admin**: approve members/friends, manage households/branches, generate invite codes, full visibility,
@@ -579,11 +622,11 @@ a Family Tree view
 tap-to-open profile pages from anywhere a person shows up (see "Profile
 pages" section above), and a notifications bell for reactions/comments on your
 posts (see "Notifications" section above), with real browser/OS push notifications
-now live (see "Push notifications" above).
+now live (see "Push notifications" above), and account deactivation for a real
+account holder's login (see "Account deactivation" section above), which was
+the last item on this list.
 
-**Deferred:** native app wrapper,
-deactivating a real account holder's login (vs. the deceased-toggle already
-built for no-account extraContacts).
+**Deferred:** native app wrapper. That's the only thing left off this list.
 
 ## Working Style / Preferences
 

@@ -420,10 +420,10 @@
     </div>
   </div>
 
-  <!-- PENDING APPROVAL -->
+  <!-- PENDING APPROVAL / DEACTIVATED -->
   <div id="pendingScreen">
-    <h2>You're on the list 🎉</h2>
-    <p style="color:var(--ink-soft)">An admin needs to approve your account before you can see the family space. Check back soon.</p>
+    <h2 id="pendingTitle">You're on the list 🎉</h2>
+    <p style="color:var(--ink-soft)" id="pendingText">An admin needs to approve your account before you can see the family space. Check back soon.</p>
     <button class="btn secondary small" id="pendingSignOut">Sign out</button>
   </div>
 
@@ -578,6 +578,12 @@
         <div class="card">
           <h3 style="margin-top:0">Pending approvals</h3>
           <div id="pendingList" class="empty">Loading…</div>
+        </div>
+        <div class="card">
+          <h3 style="margin-top:0">🚫 Deactivated accounts</h3>
+          <p class="hh">Deactivating (🚫 next to someone in Contacts) blocks their login instantly
+            without deleting anything they've posted. Reactivate here any time.</p>
+          <div id="deactivatedList" class="empty">Loading…</div>
         </div>
         <div class="card">
           <h3 style="margin-top:0">Invite codes</h3>
@@ -1061,6 +1067,16 @@ onAuthStateChanged(auth, (user) => {
     myDoc = snap.exists() ? snap.data() : null;
 
     if (!myDoc || myDoc.status !== 'approved') {
+      // Covers both "never approved yet" and "an admin deactivated this account while it was
+      // already signed in" — the latter needs its own message, and needs every other listener
+      // torn down right away (they'd otherwise keep running against data the rules no longer
+      // let this account read, throwing permission-denied on every next update).
+      if (_shellInitialized) { cleanupListeners(); _shellInitialized = false; }
+      const deactivated = myDoc && myDoc.status === 'deactivated';
+      $('pendingTitle').textContent = deactivated ? 'Account deactivated' : "You're on the list 🎉";
+      $('pendingText').textContent = deactivated
+        ? 'A family admin has deactivated this account. If you think this is a mistake, reach out to them directly.'
+        : "An admin needs to approve your account before you can see the family space. Check back soon.";
       show('pendingScreen');
       return;
     }
@@ -1506,7 +1522,7 @@ function renderContacts() {
       <div class="contactRow">
         <div style="display:flex; align-items:center; gap:8px">
           <span class="profileLink" data-uid="${u.id}" style="display:flex; align-items:center; gap:8px; cursor:pointer">${avatarHtml(u.name, u.photoUrl, 32)}<span class="nm">${escapeHtml(u.name)}${hh && hh.responderId === u.id ? '<span class="respBadge">responder</span>' : ''}${ageBadgeHtml(u)}</span></span>
-          ${canEditProfile(u.id) ? `<button class="editBtn" data-uid="${u.id}">✎</button>` : ''}${u.id !== currentUser.uid ? `<button class="editBtn dmBtn" data-uid="${u.id}" title="Message">💬</button>` : ''}
+          ${canEditProfile(u.id) ? `<button class="editBtn" data-uid="${u.id}">✎</button>` : ''}${u.id !== currentUser.uid ? `<button class="editBtn dmBtn" data-uid="${u.id}" title="Message">💬</button>` : ''}${myDoc.role === 'admin' && u.id !== currentUser.uid ? `<button class="editBtn deactivateBtn" data-uid="${u.id}" data-name="${escapeHtml(u.name)}" title="Deactivate account">🚫</button>` : ''}
         </div>
         <div class="info">${escapeHtml(u.email || '')}${u.phone ? '<br>' + escapeHtml(u.phone) : ''}</div>
       </div>`).join('');
@@ -1517,8 +1533,14 @@ function renderContacts() {
       </div>`).join('');
     return header + memberRows + extraRows;
   }).join('');
-  wrap.querySelectorAll('.editBtn:not(.dmBtn)').forEach(b => { b.onclick = () => openEditProfile(b.dataset.uid); });
+  wrap.querySelectorAll('.editBtn:not(.dmBtn):not(.deactivateBtn)').forEach(b => { b.onclick = () => openEditProfile(b.dataset.uid); });
   wrap.querySelectorAll('.dmBtn').forEach(b => { b.onclick = () => startDM(b.dataset.uid); });
+  wrap.querySelectorAll('.deactivateBtn').forEach(b => {
+    b.onclick = async () => {
+      if (!confirm(`Deactivate ${b.dataset.name}'s account? They'll be signed out of the family space immediately, but nothing they've posted is deleted. You can reactivate them later from Admin → Deactivated accounts.`)) return;
+      await updateDoc(doc(db, 'users', b.dataset.uid), { status: 'deactivated', deactivatedAt: serverTimestamp() });
+    };
+  });
 }
 
 // ---------- Family Tree (Branch -> Household -> Person, from existing grouping data —
@@ -2825,24 +2847,39 @@ function initAdmin() {
   const q = query(collection(db, 'users'));
   unsubPending = onSnapshot(q, (snap) => {
     const wrap = $('pendingList');
+    const deactWrap = $('deactivatedList');
     wrap.innerHTML = '';
-    let any = false;
+    deactWrap.innerHTML = '';
+    let any = false, anyDeact = false;
     let pending = 0;
     snap.forEach(d => {
       const u = d.data();
-      if (u.status !== 'pending') return;
-      pending++;
-      any = true;
-      const row = document.createElement('div');
-      row.className = 'contactRow';
-      row.innerHTML = `<div><div class="nm">${escapeHtml(u.name)}${ageBadgeHtml(u)}</div><div class="hh">${escapeHtml(u.email || '')}</div></div>`;
-      const btn = document.createElement('button');
-      btn.className = 'btn small'; btn.textContent = 'Approve';
-      btn.onclick = async () => { await updateDoc(doc(db, 'users', d.id), { status: 'approved' }); };
-      row.appendChild(btn);
-      wrap.appendChild(row);
+      if (u.status === 'pending') {
+        pending++;
+        any = true;
+        const row = document.createElement('div');
+        row.className = 'contactRow';
+        row.innerHTML = `<div><div class="nm">${escapeHtml(u.name)}${ageBadgeHtml(u)}</div><div class="hh">${escapeHtml(u.email || '')}</div></div>`;
+        const btn = document.createElement('button');
+        btn.className = 'btn small'; btn.textContent = 'Approve';
+        btn.onclick = async () => { await updateDoc(doc(db, 'users', d.id), { status: 'approved' }); };
+        row.appendChild(btn);
+        wrap.appendChild(row);
+      } else if (u.status === 'deactivated') {
+        anyDeact = true;
+        const when = u.deactivatedAt && u.deactivatedAt.toDate ? u.deactivatedAt.toDate().toLocaleDateString([], { dateStyle: 'medium' }) : '';
+        const row = document.createElement('div');
+        row.className = 'contactRow';
+        row.innerHTML = `<div><div class="nm">${escapeHtml(u.name)}</div><div class="hh">${escapeHtml(u.email || '')}${when ? ' · deactivated ' + when : ''}</div></div>`;
+        const btn = document.createElement('button');
+        btn.className = 'btn small secondary'; btn.textContent = 'Reactivate';
+        btn.onclick = async () => { await updateDoc(doc(db, 'users', d.id), { status: 'approved', deactivatedAt: null }); };
+        row.appendChild(btn);
+        deactWrap.appendChild(row);
+      }
     });
     if (!any) wrap.innerHTML = '<div class="empty">No pending requests.</div>';
+    if (!anyDeact) deactWrap.innerHTML = '<div class="empty">No deactivated accounts.</div>';
     pendingCount = pending;
     renderDashboard();
   });
