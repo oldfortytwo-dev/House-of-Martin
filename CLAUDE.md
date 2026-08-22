@@ -720,6 +720,18 @@ app this size; the PWA install (real manifest + icon, see "PWA install" above) c
   icon has been changed so far (to a name-agnostic house + family-of-three glyph, see "PWA
   install" above) — the manifest's `name`/`short_name`, the page `<title>`, and every in-app
   reference to "House of Martin" are all still exactly as-is until an explicit decision is made.
+- **General polish pass needed — app feels clunky, both aesthetically and functionally.** Ryan's
+  own assessment, not a specific bug report; needs a real evaluation pass before deciding what to
+  actually change. Two concrete areas he's already flagged within this:
+  - **Contacts** — Ryan identified this tab specifically as an area that needs improvement, but
+    didn't yet specify what about it feels off (layout, information density, actions available,
+    something else) — needs clarification or a fresh look before editing.
+  - **Adding people to households + selectable-from-dropdown pickers** — the self-service
+    household join flow (Edit Info modal → household `<select>`, see "Households & Branches"
+    above) and the various individual-picker dropdowns across the app (Wall audience picker,
+    Event invite picker, etc.) apparently aren't working the way Ryan expects or want improving;
+    needs a closer look at exactly which picker(s) and what's wrong with them specifically before
+    editing.
 
 ## Working Style / Preferences
 
