@@ -696,7 +696,30 @@ now live (see "Push notifications" above), and account deactivation for a real
 account holder's login (see "Account deactivation" section above), which was
 the last item on this list.
 
-**Deferred:** native app wrapper. That's the only thing left off this list.
+**Deferred (declined, not just unfinished):** native app wrapper — App Store/Play Store overhead
+(developer fee, review process, two extra build pipelines) isn't worth it for a private family
+app this size; the PWA install (real manifest + icon, see "PWA install" above) covers the same
+"icon on the home screen" need for free.
+
+**Open items (as of 2026-08-22):**
+- **Push notifications — real-device round trip not yet confirmed.** Deployed, and every piece
+  up to the actual OS notification has been verified (see "Push notifications" above), but Claude
+  has no real production login and deliberately never held the private VAPID key, so the last
+  step — a real member taps "Enable push notifications," grants the browser permission prompt,
+  and confirms a real reaction/comment from someone else produces an actual OS-level notification
+  — needs a real person (Ryan or a family tester) to do it.
+- **Active-conversation clarity fix — awaiting Dad's confirmation.** Built and deployed in
+  response to Dad getting confused about Whole Family vs. a DM (see "Active-conversation clarity"
+  above); not yet confirmed whether it actually solved the confusion for him specifically.
+- **Household setup worksheet bulk-import — offered, not started.** Claude offered to build a
+  bulk-import tool for the worksheet answers (see the household/branch guide artifact and
+  "Households & Branches" section above) once Ryan starts collecting them from the family; no
+  decision made yet on whether/when to build it.
+- **Possible rename to "MyFamily" — floated, not decided.** Ryan mentioned this as a *potential*
+  future direction if this app is ever reused beyond the Martin family specifically. Only the app
+  icon has been changed so far (to a name-agnostic house + family-of-three glyph, see "PWA
+  install" above) — the manifest's `name`/`short_name`, the page `<title>`, and every in-app
+  reference to "House of Martin" are all still exactly as-is until an explicit decision is made.
 
 ## Working Style / Preferences
 
