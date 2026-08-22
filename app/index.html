@@ -389,6 +389,18 @@
   .gridTile .nm { font-size: 11.5px; font-weight: 600; margin-top: 6px; line-height: 1.25; }
   .gridTile .badgeRow { margin-top: 3px; }
 
+  /* Admin tab accordion — 11 cards used to sit permanently expanded (~4700px of scrolling on a
+     phone). Same collapse-on-demand idea as Contacts, generalized: any title + chevron summary,
+     collapsible body. Frequent cards (Dashboard/Pending/Staff) default open; the rest default
+     collapsed — see the `open` attribute on each <details> in pane-admin. */
+  .adminAcc { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 10px; overflow: hidden; }
+  .adminAcc > summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px 16px; cursor: pointer; list-style: none; font-weight: 700; font-size: 15px; border-bottom: 1px solid transparent; }
+  .adminAcc > summary::-webkit-details-marker { display: none; }
+  .adminAcc > summary .chev { color: var(--ink-soft); font-size: 12px; transition: transform .15s; flex-shrink: 0; }
+  .adminAcc[open] > summary .chev { transform: rotate(90deg); }
+  .adminAcc[open] > summary { border-bottom-color: var(--border); }
+  .adminAccBody { padding: 14px 16px; }
+
   /* Households / Branches admin */
   .hhEditor { border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-bottom: 10px; }
   .statGrid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
@@ -650,113 +662,135 @@
 
       <!-- Admin -->
       <section class="tabpane" id="pane-admin">
-        <div class="card" id="dashboardCard">
-          <h3 style="margin-top:0">📊 Dashboard</h3>
-          <div class="statGrid" id="statGrid"></div>
-          <div style="margin-top:16px; padding-top:12px; border-top:1px dashed var(--border)">
-            <div class="nm" style="font-size:13px">💰 Estimated Costs</div>
-            <div id="costBreakdown" style="margin-top:6px"></div>
-            <p class="hh" style="margin-top:8px">Estimates only, based on current usage against Firebase's published
-              Blaze (pay-as-you-go) pricing and free-tier limits — not pulled from real billing data. For exact
-              figures: <a href="https://console.firebase.google.com/project/house-of-martin/usage" target="_blank" rel="noopener">Firebase Console → Usage &amp; Billing</a>.</p>
+        <details class="adminAcc" id="dashboardCard" open>
+          <summary><span>📊 Dashboard</span><span class="chev">▶</span></summary>
+          <div class="adminAccBody">
+            <div class="statGrid" id="statGrid"></div>
+            <div style="margin-top:16px; padding-top:12px; border-top:1px dashed var(--border)">
+              <div class="nm" style="font-size:13px">💰 Estimated Costs</div>
+              <div id="costBreakdown" style="margin-top:6px"></div>
+              <p class="hh" style="margin-top:8px">Estimates only, based on current usage against Firebase's published
+                Blaze (pay-as-you-go) pricing and free-tier limits — not pulled from real billing data. For exact
+                figures: <a href="https://console.firebase.google.com/project/house-of-martin/usage" target="_blank" rel="noopener">Firebase Console → Usage &amp; Billing</a>.</p>
+            </div>
           </div>
-        </div>
-        <div class="card">
-          <h3 style="margin-top:0">👥 Staff &amp; Roles</h3>
-          <p class="hh">Any admin can promote another approved member to admin, or step another admin back down
-            to member. You can't remove your own admin access here (avoids accidental lockout) — have a
-            different admin do it, or use the Firestore console directly if you're the only one.</p>
-          <div id="staffList" style="margin-top:10px"></div>
-        </div>
-        <div class="card">
-          <h3 style="margin-top:0">Pending approvals</h3>
-          <div id="pendingList" class="empty">Loading…</div>
-        </div>
-        <div class="card">
-          <h3 style="margin-top:0">🚫 Deactivated accounts</h3>
-          <p class="hh">Deactivating (🚫 next to someone in Contacts) blocks their login instantly
-            without deleting anything they've posted. Reactivate here any time.</p>
-          <div id="deactivatedList" class="empty">Loading…</div>
-        </div>
-        <div class="card">
-          <h3 style="margin-top:0">Invite codes</h3>
-          <div class="field"><input type="text" id="newInviteCode" placeholder="e.g. MARTIN2026"></div>
-          <button class="btn small" id="createInviteBtn">Create invite code</button>
-          <div id="inviteList" style="margin-top:12px"></div>
-        </div>
-        <div class="card">
-          <h3 style="margin-top:0">📧 Weekly Digest Email</h3>
-          <p class="hh">When enabled, sends automatically every Monday 8am (ET) — upcoming
-            birthdays/anniversaries, upcoming events, and anything queued from the Events tab's
-            "Add to This Week's Family Email."</p>
-          <label class="chk" style="font-size:14px; font-weight:600">
-            <input type="checkbox" id="digestEnabledToggle"> Enable automatic Monday send
-          </label>
-          <div class="hh" id="digestEnabledStatus" style="margin:4px 0 12px"></div>
-          <div class="field"><label>Test email(s) — comma-separated, doesn't touch the real family list or mark submissions as sent</label>
-            <input type="text" id="digestTestEmails" placeholder="you@example.com, dad@example.com">
+        </details>
+        <details class="adminAcc" open>
+          <summary><span>👥 Staff &amp; Roles</span><span class="chev">▶</span></summary>
+          <div class="adminAccBody">
+            <p class="hh">Any admin can promote another approved member to admin, or step another admin back down
+              to member. You can't remove your own admin access here (avoids accidental lockout) — have a
+              different admin do it, or use the Firestore console directly if you're the only one.</p>
+            <div id="staffList" style="margin-top:10px"></div>
           </div>
-          <button class="btn small secondary" id="sendDigestTestBtn">Send test to those emails only</button>
-          <div style="margin-top:14px; padding-top:10px; border-top:1px dashed var(--border)">
-            <button class="btn small" id="sendDigestNowBtn">Send the real digest to the whole family now</button>
+        </details>
+        <details class="adminAcc" open>
+          <summary><span>Pending approvals</span><span class="chev">▶</span></summary>
+          <div class="adminAccBody">
+            <div id="pendingList" class="empty">Loading…</div>
           </div>
-          <div class="hh" id="digestNowStatus" style="margin-top:6px"></div>
-        </div>
-        <div class="card">
-          <h3 style="margin-top:0">🎂 Family Calendar — bulk import</h3>
-          <p class="hh">Paste lines in any of these formats, one per line:</p>
-          <p class="hh">
-            <code>09/18/86 Molly Ryan Martin</code> — birthday<br>
-            <code>09/10/94 Jack &amp; Jeanette Anniv</code> — anniversary<br>
-            <code>10/17/14 Death Isabel Rohrbaugh</code> — death anniversary<br>
-            <code>10/28/38 – 01/14/26 Pat Gibble</code> — birthday, passing noted
-          </p>
-          <textarea id="occBulk" class="bulkPaste" rows="6" placeholder="Paste birthday/anniversary lines here…"></textarea>
-          <button class="btn small" id="occImportBtn">Import</button>
-          <div class="hh" id="occImportStatus" style="margin-top:6px"></div>
-        </div>
-        <div class="card">
-          <h3 style="margin-top:0">📇 Address Book — bulk import</h3>
-          <p class="hh">Paste family blocks separated by a blank line. First line = household name,
-            second line = address, remaining lines = one person per line as
-            <code>Name | phone | email</code> (phone/email optional):</p>
-          <p class="hh"><code>Jack &amp; Jeanette Martin<br>1132 Bridgewater Dr, New Oxford PA 17350<br>Jack Martin | 717-577-5853 | j-jmartin@comcast.net<br>Jeanette Martin | 717-225-1827 | jeanettewm1954@gmail.com</code></p>
-          <p class="hh">If a person's email matches an existing approved account, that account gets linked
-            to the household instead of creating a duplicate no-account contact.</p>
-          <textarea id="addrBulk" class="bulkPaste" rows="8" placeholder="Paste address book blocks here…"></textarea>
-          <button class="btn small" id="addrImportBtn">Import</button>
-          <div class="hh" id="addrImportStatus" style="margin-top:6px"></div>
-        </div>
-        <div class="card">
-          <h3 style="margin-top:0">🔗 Link Calendar Birthdays to Contacts</h3>
-          <p class="hh">Matches calendar birthdays to contacts by exact name and lets you confirm/fix the
-            guessed year before applying (2-digit years are ambiguous — the same digits can mean 1917 or
-            2017 depending on the person, so nothing is applied without your review). Once applied, the
-            calendar entry and the contact stay linked — re-running this won't re-suggest or duplicate it.</p>
-          <button class="btn small" id="matchBirthdaysBtn">Find matches</button>
-          <div id="matchResults" style="margin-top:10px"></div>
-          <button class="btn small" id="applyBirthdaysBtn" style="display:none; margin-top:10px">Apply selected</button>
-          <div class="hh" id="matchStatus" style="margin-top:6px"></div>
-          <div id="unmatchedSection" style="display:none; margin-top:16px; padding-top:12px; border-top:1px dashed var(--border)">
-            <div class="nm" style="font-size:13px">No matching contact — add to a household</div>
-            <div class="hh">Common when a birthday belongs to a kid who was never in the address book, or the
-              name is spelled slightly differently between the two lists.</div>
-            <div id="unmatchedResults" style="margin-top:8px"></div>
+        </details>
+        <details class="adminAcc">
+          <summary><span>🚫 Deactivated accounts</span><span class="chev">▶</span></summary>
+          <div class="adminAccBody">
+            <p class="hh">Deactivating (🚫 next to someone in Contacts) blocks their login instantly
+              without deleting anything they've posted. Reactivate here any time.</p>
+            <div id="deactivatedList" class="empty">Loading…</div>
           </div>
-        </div>
-        <div class="card">
-          <h3 style="margin-top:0">Households</h3>
-          <div class="field"><input type="text" id="newHouseholdName" placeholder="e.g. The Alvarez-Martins"></div>
-          <button class="btn small" id="createHouseholdBtn">Create household</button>
-          <div id="householdList" style="margin-top:12px"></div>
-        </div>
-        <div class="card">
-          <h3 style="margin-top:0">Branches</h3>
-          <div class="field"><label>Name</label><input type="text" id="newBranchName" placeholder="e.g. Descendants of Grandpa Joe"></div>
-          <div class="field"><label>Households in this branch</label><div id="branchHouseholdPicker" class="chkGroup"></div></div>
-          <button class="btn small" id="createBranchBtn">Create branch</button>
-          <div id="branchList" style="margin-top:12px"></div>
-        </div>
+        </details>
+        <details class="adminAcc">
+          <summary><span>Invite codes</span><span class="chev">▶</span></summary>
+          <div class="adminAccBody">
+            <div class="field"><input type="text" id="newInviteCode" placeholder="e.g. MARTIN2026"></div>
+            <button class="btn small" id="createInviteBtn">Create invite code</button>
+            <div id="inviteList" style="margin-top:12px"></div>
+          </div>
+        </details>
+        <details class="adminAcc">
+          <summary><span>📧 Weekly Digest Email</span><span class="chev">▶</span></summary>
+          <div class="adminAccBody">
+            <p class="hh">When enabled, sends automatically every Monday 8am (ET) — upcoming
+              birthdays/anniversaries, upcoming events, and anything queued from the Events tab's
+              "Add to This Week's Family Email."</p>
+            <label class="chk" style="font-size:14px; font-weight:600">
+              <input type="checkbox" id="digestEnabledToggle"> Enable automatic Monday send
+            </label>
+            <div class="hh" id="digestEnabledStatus" style="margin:4px 0 12px"></div>
+            <div class="field"><label>Test email(s) — comma-separated, doesn't touch the real family list or mark submissions as sent</label>
+              <input type="text" id="digestTestEmails" placeholder="you@example.com, dad@example.com">
+            </div>
+            <button class="btn small secondary" id="sendDigestTestBtn">Send test to those emails only</button>
+            <div style="margin-top:14px; padding-top:10px; border-top:1px dashed var(--border)">
+              <button class="btn small" id="sendDigestNowBtn">Send the real digest to the whole family now</button>
+            </div>
+            <div class="hh" id="digestNowStatus" style="margin-top:6px"></div>
+          </div>
+        </details>
+        <details class="adminAcc">
+          <summary><span>🎂 Family Calendar — bulk import</span><span class="chev">▶</span></summary>
+          <div class="adminAccBody">
+            <p class="hh">Paste lines in any of these formats, one per line:</p>
+            <p class="hh">
+              <code>09/18/86 Molly Ryan Martin</code> — birthday<br>
+              <code>09/10/94 Jack &amp; Jeanette Anniv</code> — anniversary<br>
+              <code>10/17/14 Death Isabel Rohrbaugh</code> — death anniversary<br>
+              <code>10/28/38 – 01/14/26 Pat Gibble</code> — birthday, passing noted
+            </p>
+            <textarea id="occBulk" class="bulkPaste" rows="6" placeholder="Paste birthday/anniversary lines here…"></textarea>
+            <button class="btn small" id="occImportBtn">Import</button>
+            <div class="hh" id="occImportStatus" style="margin-top:6px"></div>
+          </div>
+        </details>
+        <details class="adminAcc">
+          <summary><span>📇 Address Book — bulk import</span><span class="chev">▶</span></summary>
+          <div class="adminAccBody">
+            <p class="hh">Paste family blocks separated by a blank line. First line = household name,
+              second line = address, remaining lines = one person per line as
+              <code>Name | phone | email</code> (phone/email optional):</p>
+            <p class="hh"><code>Jack &amp; Jeanette Martin<br>1132 Bridgewater Dr, New Oxford PA 17350<br>Jack Martin | 717-577-5853 | j-jmartin@comcast.net<br>Jeanette Martin | 717-225-1827 | jeanettewm1954@gmail.com</code></p>
+            <p class="hh">If a person's email matches an existing approved account, that account gets linked
+              to the household instead of creating a duplicate no-account contact.</p>
+            <textarea id="addrBulk" class="bulkPaste" rows="8" placeholder="Paste address book blocks here…"></textarea>
+            <button class="btn small" id="addrImportBtn">Import</button>
+            <div class="hh" id="addrImportStatus" style="margin-top:6px"></div>
+          </div>
+        </details>
+        <details class="adminAcc">
+          <summary><span>🔗 Link Calendar Birthdays to Contacts</span><span class="chev">▶</span></summary>
+          <div class="adminAccBody">
+            <p class="hh">Matches calendar birthdays to contacts by exact name and lets you confirm/fix the
+              guessed year before applying (2-digit years are ambiguous — the same digits can mean 1917 or
+              2017 depending on the person, so nothing is applied without your review). Once applied, the
+              calendar entry and the contact stay linked — re-running this won't re-suggest or duplicate it.</p>
+            <button class="btn small" id="matchBirthdaysBtn">Find matches</button>
+            <div id="matchResults" style="margin-top:10px"></div>
+            <button class="btn small" id="applyBirthdaysBtn" style="display:none; margin-top:10px">Apply selected</button>
+            <div class="hh" id="matchStatus" style="margin-top:6px"></div>
+            <div id="unmatchedSection" style="display:none; margin-top:16px; padding-top:12px; border-top:1px dashed var(--border)">
+              <div class="nm" style="font-size:13px">No matching contact — add to a household</div>
+              <div class="hh">Common when a birthday belongs to a kid who was never in the address book, or the
+                name is spelled slightly differently between the two lists.</div>
+              <div id="unmatchedResults" style="margin-top:8px"></div>
+            </div>
+          </div>
+        </details>
+        <details class="adminAcc">
+          <summary><span>Households</span><span class="chev">▶</span></summary>
+          <div class="adminAccBody">
+            <div class="field"><input type="text" id="newHouseholdName" placeholder="e.g. The Alvarez-Martins"></div>
+            <button class="btn small" id="createHouseholdBtn">Create household</button>
+            <div id="householdList" style="margin-top:12px"></div>
+          </div>
+        </details>
+        <details class="adminAcc">
+          <summary><span>Branches</span><span class="chev">▶</span></summary>
+          <div class="adminAccBody">
+            <div class="field"><label>Name</label><input type="text" id="newBranchName" placeholder="e.g. Descendants of Grandpa Joe"></div>
+            <div class="field"><label>Households in this branch</label><div id="branchHouseholdPicker" class="chkGroup"></div></div>
+            <button class="btn small" id="createBranchBtn">Create branch</button>
+            <div id="branchList" style="margin-top:12px"></div>
+          </div>
+        </details>
       </section>
     </main>
 

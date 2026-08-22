@@ -454,6 +454,35 @@ unrelated findings, all fixed:
   by Ryan with "love", correctly showed "❤️ Love" / "1▾" with no duplicate heart); no new
   console errors beyond the already-documented pre-existing transient reload-race pattern.
 
+### Admin tab audit (2026-08-22, same day, follow-up pass)
+
+By far the single biggest density problem in the app, found and fixed once Ryan asked for the
+Admin tab specifically: **11 always-expanded cards stacked in one flat list, measuring ~4,736px
+tall on a phone viewport (812px) — nearly 6 full screens of scrolling** to reach the bottom
+(Branches), with no grouping between things checked constantly (Pending approvals) and things
+touched once during initial setup (bulk-import tools).
+
+- Every card in `#pane-admin` converted from `<div class="card">` to `<details class="adminAcc">`
+  — a title + chevron `<summary>` with the rest of the card's content in `.adminAccBody`, same
+  collapse-on-demand idea as the Contacts accordion but with new, admin-specific CSS classes
+  (`.adminAcc`/`.adminAccBody`) rather than reusing the Contacts-specific `.accHousehold` ones.
+  **Ryan explicitly chose defaults by actual usage frequency** (one of three options presented):
+  Dashboard, Staff & Roles, and Pending approvals default **open** (checked often); Deactivated
+  accounts, Invite codes, Weekly Digest Email, Family Calendar bulk import, Address Book bulk
+  import, Link Calendar Birthdays, Households, and Branches default **collapsed** (one-time setup
+  or occasional-use tools).
+- Result: scroll height dropped to ~1,976px (under 42% of the original) with the three
+  high-frequency cards still visible without any taps.
+- The Households card's own internal per-household accordion (`renderHouseholdsAdmin()`'s
+  `expandedHouseholdIds`, pre-existing) now sits nested inside the new outer accordion — verified
+  this still opens/closes correctly and doesn't fight with the outer `<details>`.
+- No JS changes were needed beyond the HTML restructure — every card's existing functionality
+  (invite code creation, household editing, etc.) was verified working unchanged inside the new
+  collapsed/expanded shell.
+- Verified against the emulator: default open/closed states matched exactly what was specified;
+  invite-code creation and the nested household editor both still worked correctly inside their
+  accordions; no new console errors.
+
 ## Households & Branches — how it actually works
 
 Came up because the model wasn't obvious from using the app — worth re-reading before touching
@@ -878,16 +907,19 @@ app this size; the PWA install (real manifest + icon, see "PWA install" above) c
   reference to "House of Martin" are all still exactly as-is until an explicit decision is made.
 - **General polish pass — app feels clunky, both aesthetically and functionally.** Ryan's own
   assessment, not a specific bug report. Addressed so far — see "Contacts layout", "Households &
-  Branches — how it actually works" / "Multi-household membership", and "General polish pass
-  (2026-08-22)" above (the "drop-down to add someone from the app" request turned out to be
-  about the household editor specifically, and led to the bigger multi-household-membership
-  change once Ryan confirmed that's what he actually wanted; the 2026-08-22 pass was a real
-  structural/DOM audit of every tab, not a guess, and fixed three findings — the composer-cards-
-  pinned-above-content pattern recurring in Events and Wall, duplicate reaction-button hearts,
-  and event-card visual hierarchy). Still open: no further concrete areas identified yet — the
-  next step, if wanted, is another audit pass (Admin tab specifically wasn't covered) or waiting
-  for Ryan to flag something specific. The Wall audience picker and Event invite picker remain
-  plain `<select>`s — never the actual complaint, so intentionally untouched.
+  Branches — how it actually works" / "Multi-household membership", "General polish pass
+  (2026-08-22)", and "Admin tab audit (2026-08-22, same day, follow-up pass)" above (the
+  "drop-down to add someone from the app" request turned out to be about the household editor
+  specifically, and led to the bigger multi-household-membership change once Ryan confirmed
+  that's what he actually wanted; the two 2026-08-22 passes were real structural/DOM audits of
+  every tab, not guesses, and fixed: the composer-cards-pinned-above-content pattern recurring in
+  Events and Wall, duplicate reaction-button hearts, event-card visual hierarchy, and — the
+  biggest single fix of this whole pass — the Admin tab's 11 always-expanded cards collapsed into
+  an accordion, cutting its scrolled height by well over half). Still open: no further concrete
+  areas identified yet — every tab has now had at least one audit pass. Next step, if wanted, is
+  either a second, deeper pass on a specific tab or waiting for Ryan to flag something specific.
+  The Wall audience picker and Event invite picker remain plain `<select>`s — never the actual
+  complaint, so intentionally untouched.
 
 ## Working Style / Preferences
 
