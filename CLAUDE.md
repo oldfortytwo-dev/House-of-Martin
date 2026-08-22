@@ -360,6 +360,61 @@ than re-subscribing everything on every unrelated profile-doc change. Verified w
 emulator signups, including a "sign up and just wait" test that flipped from the pending screen to
 the full shell live and unprompted in under 5 seconds, no refresh.
 
+## Contacts layout
+
+Redesigned in response to real feedback (screenshots): the old Contacts tab was a flat list —
+every household and every person always fully expanded, no visual separation between households,
+and no-account contacts (`extraContacts`) had zero interactivity while real accounts were
+clickable but with no visible affordance that they were. The "Edit My Household" form also used
+to sit permanently expanded at the top of the tab regardless of whether you wanted it open,
+pushing the actual directory down.
+
+- **"Edit My Household" moved from an always-expanded inline card to a modal**, opened by a
+  "🏠 Edit My Household" button (visible only to the household's responder, same visibility rule
+  as before) sitting next to the existing "🌳 View Family Tree" button. Same pattern as Family
+  Tree/Notifications/Profile — nothing new to learn, and it stops eating vertical space when
+  nobody asked to see it.
+- **Three selectable Contacts layouts**, chosen via `getTheme(activeThemeId).contactsLayout`
+  (`renderContacts()`), defaulting to `'accordion'` for every built-in preset:
+  - **Accordion** (default) — each household collapses to a summary row (avatar stack, name,
+    address/people-count subtitle); tap to expand. Solves the density complaint directly.
+  - **Cards** — every household is its own bordered card, all visible at once, just with clearer
+    separation than the old flat divided list.
+  - **Grid** — larger photo-forward avatar tiles in a 3-column grid per household.
+  All three are real components (`renderContactsAccordion()`/`renderContactsCards()`/
+  `renderContactsGrid()`), not mockups — built from a shared `contactsGroupedData()` (same
+  household-grouping logic the old single renderer used) and a shared `personLinkHtml()` helper
+  so real accounts and no-account contacts render consistently across all three layouts.
+- **Every person is now clickable, real account or not** — this was the other half of the
+  complaint ("contacts are not clickable"). Real accounts open the existing profile page
+  (`.profileLink`, unchanged). No-account contacts open a new lightweight `openContactDetail()`
+  modal (`.contactDetailLink`) showing name/age/deceased-marker/phone/email, with a hint pointing
+  authorized viewers (the household's responder, or any admin) to the existing edit surface —
+  `renderMyHousehold()`'s modal for the responder, or Admin → Households for an admin editing a
+  household they don't belong to — rather than building a third extraContacts editor from
+  scratch (two already existed).
+- **The three inline icon buttons (✎ Edit / 💬 Message / 🚫 Deactivate) were removed from every
+  Contacts row** and consolidated onto the profile page's action row instead (`openProfile()`
+  already had Edit/Message; Deactivate was added there in this pass). This was a deliberate
+  declutter — three icon buttons on every single row was exactly the "elementary"/busy feeling
+  flagged in review — not just a rename. A person's own profile is a more natural home for
+  "do something to this person" than the directory row is.
+- **Custom themes can override the layout** via a new "Contacts layout" `<select>` in the theme
+  editor (`#teContactsLayout`), wired through `draftThemeFromEditor()`/`teSaveBtn`/
+  `openThemeEditorBtn` the same way every other per-theme field already was. Built-in presets
+  don't get per-preset layouts hand-tuned (unlike Wall, which has bespoke layouts per preset) —
+  they all use the `'accordion'` default; only admin-built custom themes can pick something else.
+  Live preview works correctly even for the in-progress unsaved draft theme (which isn't in
+  `customThemes` yet) via an optional `themeOverride` param on `renderContacts()`.
+- Verified against the emulator: accordion is the actual default with no custom theme created;
+  expand/collapse works; a real account's `.profileLink` correctly opens its profile page
+  (own-profile view has no Message/Deactivate, viewing an admin viewing another member correctly
+  shows all three actions); a no-account contact's `.contactDetailLink` correctly opens the detail
+  modal with the right household-specific edit hint; the "Edit My Household" modal opens/closes
+  correctly; the theme editor's Contacts-layout picker previews live (accordion → grid → cards all
+  confirmed rendering the right component with the right item counts), persists through save, and
+  survives a full page reload.
+
 ## Households & Branches — how it actually works
 
 Came up because the model wasn't obvious from using the app — worth re-reading before touching
@@ -720,18 +775,17 @@ app this size; the PWA install (real manifest + icon, see "PWA install" above) c
   icon has been changed so far (to a name-agnostic house + family-of-three glyph, see "PWA
   install" above) — the manifest's `name`/`short_name`, the page `<title>`, and every in-app
   reference to "House of Martin" are all still exactly as-is until an explicit decision is made.
-- **General polish pass needed — app feels clunky, both aesthetically and functionally.** Ryan's
-  own assessment, not a specific bug report; needs a real evaluation pass before deciding what to
-  actually change. Two concrete areas he's already flagged within this:
-  - **Contacts** — Ryan identified this tab specifically as an area that needs improvement, but
-    didn't yet specify what about it feels off (layout, information density, actions available,
-    something else) — needs clarification or a fresh look before editing.
-  - **Adding people to households + selectable-from-dropdown pickers** — the self-service
-    household join flow (Edit Info modal → household `<select>`, see "Households & Branches"
-    above) and the various individual-picker dropdowns across the app (Wall audience picker,
-    Event invite picker, etc.) apparently aren't working the way Ryan expects or want improving;
-    needs a closer look at exactly which picker(s) and what's wrong with them specifically before
-    editing.
+- **General polish pass — app feels clunky, both aesthetically and functionally.** Ryan's own
+  assessment, not a specific bug report. First concrete area (Contacts) addressed — see "Contacts
+  layout" below. Still open:
+  - **Selectable-from-dropdown pickers for adding people to households.** The various
+    individual-picker `<select>` dropdowns across the app (household responder picker, Wall
+    audience picker, Event invite picker, etc.) apparently aren't working the way Ryan expects or
+    want improving — needs a closer look at exactly which picker(s) and what's wrong with them
+    specifically before editing. Not the same thing as the Contacts redesign below, which solved
+    a different complaint (density/clickability of the directory itself, not the `<select>`
+    pickers used when *adding* someone to something).
+  - Broader aesthetic pass beyond Contacts specifically — no other concrete areas identified yet.
 
 ## Working Style / Preferences
 

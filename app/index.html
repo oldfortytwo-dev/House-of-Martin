@@ -349,6 +349,46 @@
   .editBtn { border: none; background: none; color: var(--ink-soft); font-size: 14px; cursor: pointer; padding: 4px; margin-left: 10px; }
   .contactRow .info { display: inline-flex; align-items: center; }
 
+  /* Contacts layouts — which of the three renders is chosen per-theme via .contactsLayout
+     (built-in presets default to 'accordion'; custom themes expose the picker in the editor —
+     see "Contacts layout" section in CLAUDE.md). All three share the same clickable-person
+     pattern (.profileLink for real accounts, .contactDetailLink for no-account contacts). */
+  .personLink { display: flex; align-items: center; gap: 10px; cursor: pointer; text-align: left; background: none; border: none; padding: 0; width: 100%; color: inherit; font: inherit; }
+  .personLink .nm { font-weight: 600; font-size: 14px; }
+  .personLink .info { font-size: 12px; color: var(--ink-soft); margin-top: 2px; }
+
+  /* Accordion */
+  .accHousehold { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 10px; overflow: hidden; }
+  .accSummary { display: flex; align-items: center; gap: 10px; padding: 12px 14px; cursor: pointer; list-style: none; }
+  .accSummary::-webkit-details-marker { display: none; }
+  .accSummary .avatarStack { display: flex; flex-shrink: 0; }
+  .accSummary .avatarStack > * { margin-left: -8px; border: 2px solid var(--card); border-radius: 50%; }
+  .accSummary .avatarStack > *:first-child { margin-left: 0; }
+  .accSummary .meta { flex: 1; min-width: 0; }
+  .accSummary .hhName { font-weight: 700; color: var(--accent); font-size: 14.5px; }
+  .accSummary .hhSub { font-size: 11.5px; color: var(--ink-soft); margin-top: 1px; }
+  .accSummary .chev { color: var(--ink-soft); font-size: 12px; transition: transform .15s; flex-shrink: 0; }
+  details[open] > .accSummary .chev { transform: rotate(90deg); }
+  .accBody { padding: 2px 14px 10px; }
+  .accBody .personLink { padding: 8px 0; border-top: 1px solid var(--border); }
+
+  /* Directory cards */
+  .dirCard { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 6px 18px rgba(0,0,0,.12); margin-bottom: 14px; padding: 14px 16px; }
+  .dirCard .hhName { font-weight: 700; color: var(--accent); font-size: 15px; }
+  .dirCard .hhSub { font-size: 11.5px; color: var(--ink-soft); margin: 2px 0 10px; }
+  .dirCard .personLink { padding: 7px 0; border-top: 1px solid var(--border); }
+  .dirCard .personLink:first-of-type { border-top: none; }
+
+  /* Photo grid */
+  .gridHousehold { margin-bottom: 20px; }
+  .gridHousehold .hhName { font-weight: 700; color: var(--accent); font-size: 14.5px; }
+  .gridHousehold .hhSub { font-size: 11.5px; color: var(--ink-soft); margin: 2px 0 10px; }
+  .personGrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .gridTile { text-align: center; background: none; border: none; cursor: pointer; color: inherit; font: inherit; padding: 0; }
+  .gridTile .avatarWrap img, .gridTile .avatarWrap span { width: 100% !important; height: auto !important; aspect-ratio: 1; border-radius: var(--radius); font-size: 22px !important; }
+  .gridTile .nm { font-size: 11.5px; font-weight: 600; margin-top: 6px; line-height: 1.25; }
+  .gridTile .badgeRow { margin-top: 3px; }
+
   /* Households / Branches admin */
   .hhEditor { border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-bottom: 10px; }
   .statGrid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
@@ -480,12 +520,11 @@
 
       <!-- Contacts -->
       <section class="tabpane" id="pane-contacts">
-        <div class="card" id="myHouseholdCard" style="display:none">
-          <h3 style="margin-top:0">🏠 Edit My Household</h3>
-          <div id="myHouseholdBody"></div>
+        <div style="display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap">
+          <button class="btn small secondary" id="openMyHouseholdBtn" style="display:none; width:auto">🏠 Edit My Household</button>
+          <button class="btn small secondary" id="openTreeBtn" style="width:auto">🌳 View Family Tree</button>
         </div>
-        <button class="btn small secondary" id="openTreeBtn" style="margin-bottom:10px">🌳 View Family Tree</button>
-        <div class="card" id="contactList"></div>
+        <div id="contactList" class="card"></div>
       </section>
 
       <!-- Family Tree modal -->
@@ -498,6 +537,15 @@
         </div>
       </div>
 
+      <!-- Edit My Household modal -->
+      <div class="modalBg" id="myHouseholdModalBg">
+        <div class="modalSheet">
+          <h3 style="margin-top:0">🏠 Edit My Household</h3>
+          <div id="myHouseholdBody"></div>
+          <button class="btn secondary" id="myHouseholdCloseBtn" style="margin-top:14px">Close</button>
+        </div>
+      </div>
+
       <!-- Notifications -->
       <div class="modalBg" id="notifModalBg">
         <div class="modalSheet">
@@ -506,6 +554,14 @@
           <div id="notifList"></div>
           <div class="empty" id="notifEmpty" style="display:none">No notifications yet — reactions and comments on your posts show up here.</div>
           <button class="btn secondary" id="notifCloseBtn" style="margin-top:14px">Close</button>
+        </div>
+      </div>
+
+      <!-- Contact detail (no-account contacts) -->
+      <div class="modalBg" id="contactDetailModalBg">
+        <div class="modalSheet">
+          <div id="contactDetailBody"></div>
+          <button class="btn secondary" id="contactDetailCloseBtn" style="margin-top:14px">Close</button>
         </div>
       </div>
 
@@ -873,6 +929,13 @@
           <option value="aurora">Full — animated background + glow</option>
         </select>
       </div>
+      <div class="field"><label>Contacts layout</label>
+        <select id="teContactsLayout">
+          <option value="accordion" selected>Accordion — tap a household to expand it</option>
+          <option value="cards">Directory cards — every household visible at once</option>
+          <option value="grid">Photo grid — larger avatar tiles</option>
+        </select>
+      </div>
       <button class="btn small secondary" id="tePreviewBtn">Preview</button>
       <button class="btn small" id="teSaveBtn" style="margin-top:8px">Save custom theme</button>
       <button class="btn secondary" id="teCancelBtn" style="margin-top:8px">Cancel</button>
@@ -990,6 +1053,7 @@ function loadAndApplyMyTheme() {
   const override = localStorage.getItem('hom_theme');
   applyTheme((override && getTheme(override)) ? override : familyDefaultThemeId);
   rerenderWallFeed();
+  renderContacts();
 }
 applyTheme(localStorage.getItem('hom_theme') || 'classic'); // pre-login, so the sign-in screen matches too
 
@@ -1548,8 +1612,14 @@ function initContacts() {
   });
 }
 
-function renderContacts() {
-  const wrap = $('contactList');
+// Every person — real account or no-account extraContact — is now a single tappable unit:
+// real accounts open the existing profile page (.profileLink, unchanged); no-account contacts
+// open the new lightweight openContactDetail() modal. Edit/Message/Deactivate actions moved
+// OFF the row itself and onto the profile page's action row (see openProfile()) — this was a
+// deliberate declutter, not just a rename: three icon buttons on every single row was exactly
+// the "elementary"/busy feeling flagged in review, and the person's own profile is a more
+// natural home for "do something to this person" than the directory row is.
+function contactsGroupedData() {
   const byHousehold = {};
   allApprovedUsers.forEach(u => {
     const key = (u.householdId && householdsById[u.householdId]) ? u.householdId : 'none';
@@ -1559,40 +1629,126 @@ function renderContacts() {
     .filter(h => (byHousehold[h.id] && byHousehold[h.id].length) || (h.extraContacts && h.extraContacts.length))
     .map(h => h.id);
   const orderedKeys = [...hhIdsWithContent, ...(byHousehold['none'] ? ['none'] : [])];
-  if (!orderedKeys.length) { wrap.innerHTML = '<div class="empty">No approved members yet.</div>'; return; }
-
-  wrap.innerHTML = orderedKeys.map(key => {
-    const hh = key !== 'none' ? householdsById[key] : null;
-    const infoBits = [];
-    if (hh && hh.phone) infoBits.push(escapeHtml(hh.phone));
-    if (hh && hh.address) infoBits.push(escapeHtml(hh.address));
-    if (hh && hh.anniversary) infoBits.push('💍 ' + new Date(hh.anniversary + 'T00:00:00').toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }));
-    const contactLine = infoBits.length ? `<span class="hh">${infoBits.join(' · ')}</span>` : '';
-    const header = `<div class="hhHeader"><span>${hh ? '🏠 ' + escapeHtml(hh.name) : 'No household set'}</span>${contactLine}</div>`;
-    const memberRows = (byHousehold[key] || []).map(u => `
-      <div class="contactRow">
-        <div style="display:flex; align-items:center; gap:8px">
-          <span class="profileLink" data-uid="${u.id}" style="display:flex; align-items:center; gap:8px; cursor:pointer">${avatarHtml(u.name, u.photoUrl, 32)}<span class="nm">${escapeHtml(u.name)}${hh && hh.responderId === u.id ? '<span class="respBadge">responder</span>' : ''}${ageBadgeHtml(u)}</span></span>
-          ${canEditProfile(u.id) ? `<button class="editBtn" data-uid="${u.id}">✎</button>` : ''}${u.id !== currentUser.uid ? `<button class="editBtn dmBtn" data-uid="${u.id}" title="Message">💬</button>` : ''}${myDoc.role === 'admin' && u.id !== currentUser.uid ? `<button class="editBtn deactivateBtn" data-uid="${u.id}" data-name="${escapeHtml(u.name)}" title="Deactivate account">🚫</button>` : ''}
-        </div>
-        <div class="info">${escapeHtml(u.email || '')}${u.phone ? '<br>' + escapeHtml(u.phone) : ''}</div>
-      </div>`).join('');
-    const extraRows = ((hh && hh.extraContacts) || []).map(ec => `
-      <div class="contactRow">
-        <div><div class="nm">${escapeHtml(ec.name)}${ec.deceased ? ' 🕊' : ''}${ageBadgeHtml(ec)}<span class="noAccountBadge">no account</span></div></div>
-        <div class="info">${ec.email ? escapeHtml(ec.email) : ''}${ec.phone ? '<br>' + escapeHtml(ec.phone) : ''}</div>
-      </div>`).join('');
-    return header + memberRows + extraRows;
-  }).join('');
-  wrap.querySelectorAll('.editBtn:not(.dmBtn):not(.deactivateBtn)').forEach(b => { b.onclick = () => openEditProfile(b.dataset.uid); });
-  wrap.querySelectorAll('.dmBtn').forEach(b => { b.onclick = () => startDM(b.dataset.uid); });
-  wrap.querySelectorAll('.deactivateBtn').forEach(b => {
-    b.onclick = async () => {
-      if (!confirm(`Deactivate ${b.dataset.name}'s account? They'll be signed out of the family space immediately, but nothing they've posted is deleted. You can reactivate them later from Admin → Deactivated accounts.`)) return;
-      await updateDoc(doc(db, 'users', b.dataset.uid), { status: 'deactivated', deactivatedAt: serverTimestamp() });
-    };
-  });
+  return orderedKeys.map(key => ({
+    key,
+    hh: key !== 'none' ? householdsById[key] : null,
+    members: byHousehold[key] || [],
+    extraContacts: (key !== 'none' && householdsById[key] && householdsById[key].extraContacts) || []
+  }));
 }
+
+function hhSubtitleHtml(hh, count) {
+  const bits = [];
+  if (hh) {
+    if (hh.address) bits.push(escapeHtml(hh.address));
+    else if (hh.phone) bits.push(escapeHtml(hh.phone));
+  }
+  bits.push(count === 1 ? '1 person' : `${count} people`);
+  return bits.join(' · ');
+}
+
+// baseClass is 'personLink' (accordion/cards rows) or 'gridTile' (photo grid) — the two layouts
+// need different CSS shapes for the same clickable unit, but identical click-target logic.
+function personLinkHtml(person, isMember, hh, { size, baseClass } = {}) {
+  const px = size || 32;
+  const badges = (hh && isMember && hh.responderId === person.id ? '<span class="respBadge">responder</span>' : '')
+    + ageBadgeHtml(person)
+    + (person.deceased ? ' 🕊' : '')
+    + (isMember ? '' : '<span class="noAccountBadge">no account</span>');
+  const infoBits = isMember ? [] : [person.phone, person.email].filter(Boolean);
+  const info = infoBits.length ? `<div class="info">${escapeHtml(infoBits.join(' · '))}</div>` : '';
+  const linkClass = isMember ? 'profileLink' : 'contactDetailLink';
+  const dataAttrs = isMember ? `data-uid="${person.id}"` : `data-hh="${hh ? hh.id : ''}" data-ec="${person.id}"`;
+  const attrs = `class="${baseClass} ${linkClass}" ${dataAttrs}`;
+  return { attrs, avatar: avatarHtml(person.name, person.photoUrl || null, px), badges, info };
+}
+
+function renderContactsAccordion(groups) {
+  return groups.map(g => {
+    const allPeople = [...g.members, ...g.extraContacts];
+    const stack = allPeople.slice(0, 3).map(p => avatarHtml(p.name, p.photoUrl || null, 26)).join('');
+    const rows = allPeople.map((p, i) => {
+      const { attrs, avatar, badges, info } = personLinkHtml(p, i < g.members.length, g.hh, { size: 32, baseClass: 'personLink' });
+      return `<button ${attrs}>${avatar}<div><div class="nm">${escapeHtml(p.name)}${badges}</div>${info}</div></button>`;
+    }).join('');
+    return `<details class="accHousehold">
+      <summary class="accSummary">
+        <div class="avatarStack">${stack}</div>
+        <div class="meta"><div class="hhName">${g.hh ? '🏠 ' + escapeHtml(g.hh.name) : 'No household set'}</div><div class="hhSub">${hhSubtitleHtml(g.hh, allPeople.length)}</div></div>
+        <span class="chev">▶</span>
+      </summary>
+      <div class="accBody">${rows}</div>
+    </details>`;
+  }).join('');
+}
+
+function renderContactsCards(groups) {
+  return groups.map(g => {
+    const allPeople = [...g.members, ...g.extraContacts];
+    const rows = allPeople.map((p, i) => {
+      const { attrs, avatar, badges, info } = personLinkHtml(p, i < g.members.length, g.hh, { size: 32, baseClass: 'personLink' });
+      return `<button ${attrs}>${avatar}<div><div class="nm">${escapeHtml(p.name)}${badges}</div>${info}</div></button>`;
+    }).join('');
+    return `<div class="dirCard">
+      <div class="hhName">${g.hh ? '🏠 ' + escapeHtml(g.hh.name) : 'No household set'}</div>
+      <div class="hhSub">${hhSubtitleHtml(g.hh, allPeople.length)}</div>
+      ${rows}
+    </div>`;
+  }).join('');
+}
+
+function renderContactsGrid(groups) {
+  return groups.map(g => {
+    const allPeople = [...g.members, ...g.extraContacts];
+    const tiles = allPeople.map((p, i) => {
+      const { attrs, avatar, badges } = personLinkHtml(p, i < g.members.length, g.hh, { size: 96, baseClass: 'gridTile' });
+      return `<button ${attrs}><div class="avatarWrap">${avatar}</div><div class="nm">${escapeHtml(p.name)}</div><div class="badgeRow">${badges}</div></button>`;
+    }).join('');
+    return `<div class="gridHousehold">
+      <div class="hhName">${g.hh ? '🏠 ' + escapeHtml(g.hh.name) : 'No household set'}</div>
+      <div class="hhSub">${hhSubtitleHtml(g.hh, allPeople.length)}</div>
+      <div class="personGrid">${tiles}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderContacts(themeOverride) {
+  const wrap = $('contactList');
+  const groups = contactsGroupedData();
+  if (!groups.length) { wrap.innerHTML = '<div class="empty">No approved members yet.</div>'; return; }
+  const layout = (themeOverride || getTheme(activeThemeId)).contactsLayout || 'accordion';
+  wrap.className = 'card contactsWrap-' + layout;
+  wrap.innerHTML = layout === 'cards' ? renderContactsCards(groups)
+    : layout === 'grid' ? renderContactsGrid(groups)
+    : renderContactsAccordion(groups);
+}
+
+// ---------- Contact detail (no-account contacts — real accounts use openProfile() instead) ----------
+function openContactDetail(hhId, ecId) {
+  const hh = householdsById[hhId];
+  const ec = hh && (hh.extraContacts || []).find(e => e.id === ecId);
+  if (!hh || !ec) return;
+  const canEdit = hh.responderId === currentUser.uid || myDoc.role === 'admin';
+  const infoLines = [ec.phone ? `📞 ${escapeHtml(ec.phone)}` : '', ec.email ? `✉️ ${escapeHtml(ec.email)}` : ''].filter(Boolean);
+  $('contactDetailBody').innerHTML = `
+    <div style="display:flex; align-items:center; gap:14px">
+      ${avatarHtml(ec.name, null, 64)}
+      <div>
+        <div style="font-size:1.15em; font-weight:700">${escapeHtml(ec.name)}${ec.deceased ? ' 🕊' : ''}${ageBadgeHtml(ec)}</div>
+        <div class="hh">🏠 ${escapeHtml(hh.name)}</div>
+        <span class="noAccountBadge">no account</span>
+      </div>
+    </div>
+    ${infoLines.length ? `<div style="margin-top:14px; line-height:1.8">${infoLines.join('<br>')}</div>` : ''}
+    ${canEdit ? `<p class="hh" style="margin-top:14px">To edit, mark deceased, or remove this contact, use ${hh.responderId === currentUser.uid ? '🏠 Edit My Household' : 'Admin → Households'}.</p>` : ''}
+  `;
+  $('contactDetailModalBg').classList.add('open');
+}
+document.addEventListener('click', (e) => {
+  const link = e.target.closest('.contactDetailLink');
+  if (link) openContactDetail(link.dataset.hh, link.dataset.ec);
+});
+$('contactDetailCloseBtn').onclick = () => $('contactDetailModalBg').classList.remove('open');
 
 // ---------- Family Tree (Branch -> Household -> Person, from existing grouping data —
 // not a genealogical parent/child/spouse chart, since we don't collect that relationship
@@ -1642,6 +1798,8 @@ function renderFamilyTree() {
 }
 
 $('openTreeBtn').onclick = () => { renderFamilyTree(); $('treeModalBg').classList.add('open'); };
+$('openMyHouseholdBtn').onclick = () => $('myHouseholdModalBg').classList.add('open');
+$('myHouseholdCloseBtn').onclick = () => $('myHouseholdModalBg').classList.remove('open');
 $('treeCloseBtn').onclick = () => $('treeModalBg').classList.remove('open');
 
 // ---------- Profile pages ----------
@@ -1673,9 +1831,15 @@ function openProfile(uid) {
   const actions = [];
   if (canEditProfile(uid)) actions.push(`<button class="btn small secondary" id="profileEditBtn" style="width:auto">✎ Edit Info</button>`);
   if (uid !== currentUser.uid) actions.push(`<button class="btn small secondary" id="profileDmBtn" style="width:auto">💬 Message</button>`);
+  if (myDoc.role === 'admin' && uid !== currentUser.uid) actions.push(`<button class="btn small secondary" id="profileDeactivateBtn" style="width:auto">🚫 Deactivate</button>`);
   $('profileActions').innerHTML = actions.join(' ');
   if ($('profileEditBtn')) $('profileEditBtn').onclick = () => { $('profileModalBg').classList.remove('open'); openEditProfile(uid); };
   if ($('profileDmBtn')) $('profileDmBtn').onclick = () => { $('profileModalBg').classList.remove('open'); startDM(uid); };
+  if ($('profileDeactivateBtn')) $('profileDeactivateBtn').onclick = async () => {
+    if (!confirm(`Deactivate ${u.name}'s account? They'll be signed out of the family space immediately, but nothing they've posted is deleted. You can reactivate them later from Admin → Deactivated accounts.`)) return;
+    await updateDoc(doc(db, 'users', uid), { status: 'deactivated', deactivatedAt: serverTimestamp() });
+    $('profileModalBg').classList.remove('open');
+  };
 
   $('profileFeed').innerHTML = '';
   $('profileFeedEmpty').style.display = 'none';
@@ -1842,9 +2006,9 @@ async function renderPushRow(errorMsg) {
 let myHouseholdEcState = {}; // extraContact id -> 'edit' | undefined
 
 function renderMyHousehold() {
-  const card = $('myHouseholdCard');
-  if (!myHouseholdDoc || myHouseholdDoc.responderId !== currentUser.uid) { card.style.display = 'none'; return; }
-  card.style.display = 'block';
+  const btn = $('openMyHouseholdBtn');
+  if (!myHouseholdDoc || myHouseholdDoc.responderId !== currentUser.uid) { btn.style.display = 'none'; return; }
+  btn.style.display = 'inline-flex';
   const hh = myHouseholdDoc;
   const body = $('myHouseholdBody');
 
@@ -3673,6 +3837,7 @@ function renderThemeGrid() {
       localStorage.setItem('hom_theme', btn.dataset.id);
       renderThemeGrid();
       rerenderWallFeed();
+      renderContacts();
     };
   });
 }
@@ -3711,6 +3876,7 @@ $('openThemeEditorBtn').onclick = () => {
   $('teRadius').value = base.vars.radius;
   $('teFontHeading').value = base.vars.fontHeading;
   $('teAnim').value = base.anim;
+  $('teContactsLayout').value = base.contactsLayout || 'accordion';
   _teReturnThemeId = activeThemeId;
   $('themeModalBg').classList.remove('open');
   $('themeEditorModalBg').classList.add('open');
@@ -3727,12 +3893,18 @@ function draftThemeFromEditor() {
       border: `color-mix(in srgb, ${ink} 14%, ${bg})`,
       radius: $('teRadius').value, fontHeading: $('teFontHeading').value, fontBody: SYSTEM_FONT
     },
-    anim: $('teAnim').value
+    anim: $('teAnim').value,
+    contactsLayout: $('teContactsLayout').value
   };
 }
-$('tePreviewBtn').onclick = () => applyTheme(draftThemeFromEditor());
+$('tePreviewBtn').onclick = () => {
+  const draft = draftThemeFromEditor();
+  applyTheme(draft);
+  renderContacts(draft);
+};
 $('teCancelBtn').onclick = () => {
   applyTheme(_teReturnThemeId);
+  renderContacts();
   $('themeEditorModalBg').classList.remove('open');
   $('themeModalBg').classList.add('open');
   renderThemeGrid();
@@ -3743,6 +3915,7 @@ $('teSaveBtn').onclick = async () => {
   const updated = [...customThemes, draft];
   await setDoc(doc(db, 'config', 'appearance'), { customThemes: updated, defaultThemeId: familyDefaultThemeId }, { merge: true });
   applyTheme(draft);
+  renderContacts();
   localStorage.setItem('hom_theme', draft.id);
   $('themeEditorModalBg').classList.remove('open');
 };
