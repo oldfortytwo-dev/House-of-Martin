@@ -427,20 +427,82 @@ this area again, and worth re-explaining to the user if it comes up.
   people. You don't join a branch directly — your household does, and you're in it by extension.
   This is the part that's confusing on first read: there's no "add yourself to a branch" concept
   at the person level by design, only "which branch(es) does my household belong to."
-- **Everyone can join/leave/create a household themselves**, from the Edit Info modal (their own,
-  or — if admin — anyone's): a Household dropdown lists every household plus "+ Create a new
-  household…". Selecting a different one leaves the old and joins the new in one write; creating
-  one as a non-admin makes you its first member and responder automatically (an admin creating one
-  starts it empty, since there's no "self" to default into it).
+- **A person can belong to more than one household at once** (added 2026-08-22, in response to a
+  real scenario: a divided family where a kid genuinely has two homes). `users/{uid}.householdIds`
+  is an array, not a single value — see the "Multi-household membership" section right below for
+  the full mechanics. `extraContacts` (no-account family members) are still single-household —
+  they live inside one specific household's own document, not as an independent entity, so
+  "belongs to two households at once" doesn't apply the same way to them.
 - **Only a household's responder can pick which branch(es) it belongs to** — from Contacts →
   "Edit My Household" → the branch checklist. This is deliberately at the household level, not
   the person level, matching the model above.
 - **Regular members can't create/manage branches themselves** — only assign their own household
   to existing ones. Creating a new branch is still Admin → Branches (an admin-only concept, since
   a branch groups multiple households together and needs someone with a bird's-eye view).
-- Both of these are genuine self-toggle permissions in `firestore.rules`, not just hidden UI —
-  see the Firestore rules for the exact mechanism (Set-difference check ensuring you can only
-  add/remove *yourself* or *your own household*, never anyone else's membership).
+- Branch membership is a genuine self-toggle permission in `firestore.rules`, not just hidden UI —
+  see the rules file for the exact mechanism (Set-difference check ensuring a household's
+  responder can only add/remove *their own household's* membership in a branch, never anyone
+  else's).
+
+### Multi-household membership — the mechanics
+
+- **Source of truth**: `users/{uid}.householdIds` (array) forward, `households/{id}.memberIds`
+  (array) reverse — both kept in sync on every write, same two-sided pattern already used
+  elsewhere in this data model. `userHouseholdIds(u)` is the one helper every read site goes
+  through; it's tolerant of the pre-migration singular `householdId` field (old data — including
+  anything written before this date — keeps working with zero backfill needed, no migration
+  script was run or is needed).
+- **Self-service (Edit Info modal, own account or admin-editing-anyone)**: the old single
+  `<select>` "Household" dropdown is now a checkbox checklist (`#epHouseholdChecklist`) — check
+  or uncheck any number of households, plus a separate "Create a new household…" button that
+  commits immediately (writes the household **and** updates the creator's own `householdIds` in
+  the same action, rather than waiting for the outer Save — a real bug caught in testing: Create
+  followed by Cancel used to leave the household listing the creator as a member while the
+  creator's own record didn't list it back). Saving reconciles the checklist against what was
+  checked before: one `households/{id}` doc update per household whose state actually changed,
+  each touching *only* that person's own presence in that one array — this is the same
+  self-toggle-safe shape the branch checklist already used, so **no `firestore.rules` changes
+  were needed** for this whole self-service path, multi-household or not.
+- **A household's responder can add or remove an *existing* account holder** too — Contacts →
+  "Edit My Household" → "Members with an account" section, a dropdown of every approved member
+  not already in that household plus a "✕" next to each current member (except the responder,
+  who has to be reassigned first — same guard the demote-admin UI uses elsewhere). This is the
+  one piece that genuinely needed a Cloud Function (`updateHouseholdMembership`,
+  `functions/index.js`): it writes to a *third party's* own `users/{uid}.householdIds`, and
+  `firestore.rules` only ever lets that person themselves (or an admin) write their own doc — a
+  responder is neither for someone else's account, so there's no safe client-side rules path for
+  this specific direction. The function checks the caller is the household's current responder
+  or an admin, then does both sides of the write (`households/{id}.memberIds` +
+  `users/{uid}.householdIds`) in one atomic batch so they can never drift apart.
+- **If someone is the responder of more than one household**, "Edit My Household" shows a
+  household switcher (`#mhWhichHousehold`) at the top of the modal instead of just opening the
+  one; remembers which one was open across re-renders.
+- **Everywhere a household's member list is read fans a multi-household person out correctly**:
+  Contacts shows them under *every* household they're in (by design — Contacts answers "who's in
+  this household," and someone genuinely can be in more than one); the profile page lists every
+  household plus the union of all their branches; the Messages tab shows a household chat pill
+  per household; RSVP-by-household on an event shows one "RSVP for the whole X household" block
+  per household the viewer is the responder of. Family Tree needed **no changes** for the
+  fan-out — it was already driven by `household.memberIds` (the reverse index), which naturally
+  already supported one person appearing under several household nodes.
+- **Admin → Households' member checkbox editor** no longer treats household membership as
+  exclusive — checking someone in used to silently *remove* them from whatever household they
+  were previously in (a real single-household-enforcement behavior from before this change);
+  now it only ever adds/removes *this* household from their own `householdIds`, leaving any other
+  households they belong to untouched. Deleting a household from this panel likewise only strips
+  that one household from each member's `householdIds`, not their entire household list.
+- Verified against the emulator end-to-end: a person seeded into two households fanned out
+  correctly in Contacts, Family Tree, and the Messages household pills; the responder-of-multiple
+  household switcher; adding/removing an existing member via the Cloud Function (confirmed both
+  sides of the write, not just the household side); the self-service checklist adding *and*
+  removing households (including admin-editing-someone-else); Create-then-Cancel no longer
+  leaving a one-sided membership (caught and fixed mid-testing); and the Admin → Households
+  checkbox toggle correctly leaving a person's *other* household membership untouched when
+  toggling a different one. One real bug was caught and fixed during this pass: the "add existing
+  member" success/error status message wrote to a DOM element that the live households listener
+  had already removed by the time the async call resolved (the write succeeding is what triggers
+  the re-render) — fixed by null-checking before writing to it, a pattern already used elsewhere
+  in this file for the same reason.
 
 ## Family Tree
 
@@ -776,16 +838,15 @@ app this size; the PWA install (real manifest + icon, see "PWA install" above) c
   install" above) — the manifest's `name`/`short_name`, the page `<title>`, and every in-app
   reference to "House of Martin" are all still exactly as-is until an explicit decision is made.
 - **General polish pass — app feels clunky, both aesthetically and functionally.** Ryan's own
-  assessment, not a specific bug report. First concrete area (Contacts) addressed — see "Contacts
-  layout" below. Still open:
-  - **Selectable-from-dropdown pickers for adding people to households.** The various
-    individual-picker `<select>` dropdowns across the app (household responder picker, Wall
-    audience picker, Event invite picker, etc.) apparently aren't working the way Ryan expects or
-    want improving — needs a closer look at exactly which picker(s) and what's wrong with them
-    specifically before editing. Not the same thing as the Contacts redesign below, which solved
-    a different complaint (density/clickability of the directory itself, not the `<select>`
-    pickers used when *adding* someone to something).
-  - Broader aesthetic pass beyond Contacts specifically — no other concrete areas identified yet.
+  assessment, not a specific bug report. Two concrete areas addressed so far — see "Contacts
+  layout" and "Households & Branches — how it actually works" / "Multi-household membership"
+  above (the "drop-down to add someone from the app" request turned out to be about the
+  household editor specifically, and led to the bigger multi-household-membership change once
+  Ryan confirmed that's what he actually wanted, not just a same-model convenience dropdown).
+  Still open: broader aesthetic pass beyond Contacts and the household editor specifically — no
+  other concrete areas identified yet. The Wall audience picker and Event invite picker weren't
+  touched in this pass (they were never the actual complaint — the household editor was) and
+  remain plain `<select>`s if they ever do come up as their own issue.
 
 ## Working Style / Preferences
 

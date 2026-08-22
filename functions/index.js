@@ -214,7 +214,7 @@ exports.autoApproveKnownEmail = onDocumentCreated('users/{uid}', async (event) =
     const batch = db.batch();
     batch.update(snap.ref, {
       status: 'approved',
-      householdId: hhDoc.id,
+      householdIds: [hhDoc.id],
       phone: user.phone || matched.phone || '',
       birthdate: user.birthdate || matched.birthdate || null
     });
@@ -260,4 +260,58 @@ exports.sendPushOnNotification = onDocumentCreated({ document: 'notifications/{i
   if (stillValid.length !== subs.length) {
     await userSnap.ref.update({ pushSubscriptions: stillValid });
   }
+});
+
+// Lets a household's responder (not just an admin) add or remove an EXISTING account holder
+// from their household — e.g. a divided family where a kid belongs to two households. This
+// needs to run server-side because it writes to a THIRD PARTY's own user doc
+// (users/{userId}.householdIds), which firestore.rules only lets that person themselves (or an
+// admin) write — a responder isn't either of those for someone else's account, so there's no
+// client-side rules path that could do this safely. The household side of the same edit
+// (households/{householdId}.memberIds) IS already writable by the responder directly, but both
+// sides have to change together or the two would drift out of sync, so it's simplest to do the
+// whole thing here.
+exports.updateHouseholdMembership = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required.');
+  const { householdId, userId, action } = request.data || {};
+  if (!householdId || !userId || !['add', 'remove'].includes(action)) {
+    throw new HttpsError('invalid-argument', 'householdId, userId, and action ("add" or "remove") are required.');
+  }
+
+  const callerSnap = await db.collection('users').doc(request.auth.uid).get();
+  const caller = callerSnap.data();
+  if (!caller || caller.status !== 'approved') throw new HttpsError('permission-denied', 'Not an approved member.');
+
+  const hhRef = db.collection('households').doc(householdId);
+  const hhSnap = await hhRef.get();
+  if (!hhSnap.exists) throw new HttpsError('not-found', 'Household not found.');
+  const hh = hhSnap.data();
+  const isAdmin = caller.role === 'admin';
+  const isResponder = hh.responderId === request.auth.uid;
+  if (!isAdmin && !isResponder) {
+    throw new HttpsError('permission-denied', "Only this household's responder or an admin can manage its members.");
+  }
+
+  const targetRef = db.collection('users').doc(userId);
+  const targetSnap = await targetRef.get();
+  if (!targetSnap.exists || targetSnap.data().status !== 'approved') {
+    throw new HttpsError('failed-precondition', 'That person is not an approved member.');
+  }
+  const target = targetSnap.data();
+  const memberIds = hh.memberIds || [];
+  const targetHouseholdIds = Array.isArray(target.householdIds) ? target.householdIds : (target.householdId ? [target.householdId] : []);
+
+  const batch = db.batch();
+  if (action === 'add') {
+    if (!memberIds.includes(userId)) batch.update(hhRef, { memberIds: [...memberIds, userId] });
+    if (!targetHouseholdIds.includes(householdId)) batch.update(targetRef, { householdIds: [...targetHouseholdIds, householdId] });
+  } else {
+    if (userId === hh.responderId) {
+      throw new HttpsError('failed-precondition', "Reassign this household's responder before removing them as a member.");
+    }
+    batch.update(hhRef, { memberIds: memberIds.filter(id => id !== userId) });
+    batch.update(targetRef, { householdIds: targetHouseholdIds.filter(id => id !== householdId) });
+  }
+  await batch.commit();
+  return { ok: true };
 });

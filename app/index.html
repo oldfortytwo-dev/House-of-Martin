@@ -801,8 +801,12 @@
       </div>
       <div class="field"><label>Phone</label><input type="tel" id="epPhone" placeholder="(555) 555-5555"></div>
       <div class="field"><label>Birthdate (shows age publicly only if 21 or under)</label><input type="date" id="epBirthdate"></div>
-      <div class="field"><label>Household</label>
-        <select id="epHousehold"></select>
+      <div class="field"><label>Households (can belong to more than one)</label>
+        <div class="chkGroup" id="epHouseholdChecklist"></div>
+        <div style="display:flex; gap:6px; margin-top:8px">
+          <input type="text" id="epNewHouseholdName" placeholder="Or create a new household…" style="flex:1">
+          <button class="btn small secondary" id="epCreateHouseholdBtn" style="width:auto">Create</button>
+        </div>
         <div class="hh" id="epHouseholdNote" style="margin-top:4px"></div>
       </div>
       <button class="btn" id="epSaveBtn">Save</button>
@@ -1059,9 +1063,21 @@ applyTheme(localStorage.getItem('hom_theme') || 'classic'); // pre-login, so the
 
 let currentUser = null;   // Firebase Auth user
 let myDoc = null;         // Firestore users/{uid} doc data
-let myHouseholdDoc = null; // Firestore households/{myDoc.householdId} doc data, cached
+let myHouseholds = [];    // Firestore households/{id} docs this user belongs to (0, 1, or many), cached
 let activeChannelId = 'family';
 let households = [], householdsById = {};
+
+// A person can belong to any number of households (e.g. a kid with two homes after a divorce).
+// The source of truth is users/{uid}.householdIds (array) with households/{id}.memberIds as the
+// reverse index kept in sync alongside it — same two-sided pattern branches already used for
+// households (branches/{id}.householdIds forward + nothing reverse needed there since a branch
+// only has one direction to care about). Tolerant of the pre-migration singular `householdId`
+// field so old data keeps working with zero backfill needed.
+function userHouseholdIds(u) {
+  if (!u) return [];
+  if (Array.isArray(u.householdIds)) return u.householdIds;
+  return u.householdId ? [u.householdId] : [];
+}
 let branches = [], branchesById = {};
 let usersById = {}, allApprovedUsers = [];
 let occasions = [];
@@ -1213,8 +1229,9 @@ function activeConvoInfo() {
   if (activeChannelId === 'family') {
     return { icon: '👪', title: 'Whole Family', subtitle: 'Everyone in the family can see this', isDM: false };
   }
-  if (activeChannelId.startsWith('hh_') && myHouseholdDoc) {
-    return { icon: '🏠', title: myHouseholdDoc.name, subtitle: 'Household chat — just your household', isDM: false };
+  if (activeChannelId.startsWith('hh_')) {
+    const hh = myHouseholds.find(h => 'hh_' + h.id === activeChannelId);
+    if (hh) return { icon: '🏠', title: hh.name, subtitle: 'Household chat — just this household', isDM: false };
   }
   if (activeChannelId.startsWith('br_')) {
     const br = branches.find(b => 'br_' + b.id === activeChannelId);
@@ -1245,11 +1262,12 @@ function renderChannelList() {
     return b;
   };
   $('channelList').appendChild(chBtn('family', '👪 Whole Family'));
-  if (myHouseholdDoc) $('channelList').appendChild(chBtn('hh_' + myHouseholdDoc.id, '🏠 ' + escapeHtml(myHouseholdDoc.name)));
-  if (myDoc.householdId) {
-    branches.filter(b => (b.householdIds || []).includes(myDoc.householdId))
-      .forEach(b => $('channelList').appendChild(chBtn('br_' + b.id, '🌳 ' + escapeHtml(b.name))));
-  }
+  myHouseholds.forEach(hh => $('channelList').appendChild(chBtn('hh_' + hh.id, '🏠 ' + escapeHtml(hh.name))));
+  const myHouseholdIdSet = new Set(myHouseholds.map(h => h.id));
+  const myBranchIds = new Set();
+  branches.forEach(b => { if ((b.householdIds || []).some(id => myHouseholdIdSet.has(id))) myBranchIds.add(b.id); });
+  branches.filter(b => myBranchIds.has(b.id))
+    .forEach(b => $('channelList').appendChild(chBtn('br_' + b.id, '🌳 ' + escapeHtml(b.name))));
   if (dmChannels.length) {
     const divider = document.createElement('div');
     divider.id = 'channelDivider';
@@ -1468,7 +1486,7 @@ function renderEventCard(id, ev, container) {
   const card = document.createElement('div');
   card.className = 'card eventCard';
   const whenStr = ev.when ? new Date(ev.when).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : 'Date TBD';
-  const isResponder = !!(myHouseholdDoc && myHouseholdDoc.responderId === currentUser.uid);
+  const myResponderHouseholds = myHouseholds.filter(h => h.responderId === currentUser.uid);
   card.innerHTML = `
     <div class="cardHead"><h3>${escapeHtml(ev.title)}</h3><button class="shareBtn evShareBtn">🔗 Share</button></div>
     <div class="when">${whenStr}${ev.where ? ' · ' + escapeHtml(ev.where) : ''}</div>
@@ -1479,15 +1497,15 @@ function renderEventCard(id, ev, container) {
       <button data-status="maybe">🤔 Maybe</button>
       <button data-status="no">❌ No</button>
     </div>
-    ${isResponder ? `
+    ${myResponderHouseholds.map(hh => `
     <div class="hhRsvpBlock">
-      <div class="hh">RSVP for the whole ${escapeHtml(myHouseholdDoc.name)} household:</div>
-      <div class="rsvpRow hhRsvpRow">
+      <div class="hh">RSVP for the whole ${escapeHtml(hh.name)} household:</div>
+      <div class="rsvpRow hhRsvpRow" data-hhid="${hh.id}">
         <button data-status="yes">✅ All Yes</button>
         <button data-status="maybe">🤔 Maybe</button>
         <button data-status="no">❌ Can't make it</button>
       </div>
-    </div>` : ''}
+    </div>`).join('')}
     <div class="rsvpCount" id="rc-${id}"></div>
 
     <div class="ecSection">
@@ -1509,18 +1527,21 @@ function renderEventCard(id, ev, container) {
 
   card.querySelectorAll('.rsvpMine button').forEach(btn => {
     btn.onclick = async () => {
+      // householdId here is just descriptive metadata on the RSVP doc (never read back
+      // anywhere) — with multi-household membership there's no single "the" household to
+      // attribute an individual RSVP to, so this just records the first one, if any.
       await setDoc(doc(db, 'events', id, 'rsvps', currentUser.uid), {
         status: btn.dataset.status, submittedBy: currentUser.uid, name: myDoc.name,
-        householdId: myDoc.householdId || null, viaHousehold: false, updatedAt: serverTimestamp()
+        householdId: userHouseholdIds(myDoc)[0] || null, viaHousehold: false, updatedAt: serverTimestamp()
       });
     };
   });
 
-  if (isResponder) {
-    card.querySelectorAll('.hhRsvpRow button').forEach(btn => {
-      btn.onclick = () => rsvpHousehold(id, btn.dataset.status);
+  card.querySelectorAll('.hhRsvpRow').forEach(row => {
+    row.querySelectorAll('button').forEach(btn => {
+      btn.onclick = () => rsvpHousehold(id, row.dataset.hhid, btn.dataset.status);
     });
-  }
+  });
 
   onSnapshot(collection(db, 'events', id, 'rsvps'), (snap) => {
     const counts = { yes: 0, maybe: 0, no: 0 };
@@ -1579,14 +1600,15 @@ function renderEventCard(id, ev, container) {
   });
 }
 
-async function rsvpHousehold(eventId, status) {
-  if (!myHouseholdDoc) return;
+async function rsvpHousehold(eventId, householdId, status) {
+  const hh = householdsById[householdId];
+  if (!hh) return;
   const batch = writeBatch(db);
-  (myHouseholdDoc.memberIds || []).forEach(uid => {
+  (hh.memberIds || []).forEach(uid => {
     const u = usersById[uid];
     batch.set(doc(db, 'events', eventId, 'rsvps', uid), {
       status, submittedBy: currentUser.uid, name: u ? u.name : '(household member)',
-      householdId: myHouseholdDoc.id, viaHousehold: true, updatedAt: serverTimestamp()
+      householdId: hh.id, viaHousehold: true, updatedAt: serverTimestamp()
     });
   });
   await batch.commit();
@@ -1603,7 +1625,7 @@ function initContacts() {
       usersById[d.id] = u;
       if (u.status === 'approved') allApprovedUsers.push(u);
     });
-    myHouseholdDoc = myDoc.householdId ? (householdsById[myDoc.householdId] || null) : null;
+    myHouseholds = userHouseholdIds(myDoc).map(id => householdsById[id]).filter(Boolean);
     renderContacts();
     renderMyHousehold();
     renderChannelList();
@@ -1620,10 +1642,14 @@ function initContacts() {
 // the "elementary"/busy feeling flagged in review, and the person's own profile is a more
 // natural home for "do something to this person" than the directory row is.
 function contactsGroupedData() {
+  // A person with more than one household (see userHouseholdIds()) shows up under EACH one —
+  // the fan-out is deliberate, not a bug: Contacts is "who's in this household", and someone
+  // genuinely is in more than one.
   const byHousehold = {};
   allApprovedUsers.forEach(u => {
-    const key = (u.householdId && householdsById[u.householdId]) ? u.householdId : 'none';
-    (byHousehold[key] = byHousehold[key] || []).push(u);
+    const ids = userHouseholdIds(u).filter(id => householdsById[id]);
+    const keys = ids.length ? ids : ['none'];
+    keys.forEach(key => { (byHousehold[key] = byHousehold[key] || []).push(u); });
   });
   const hhIdsWithContent = households
     .filter(h => (byHousehold[h.id] && byHousehold[h.id].length) || (h.extraContacts && h.extraContacts.length))
@@ -1787,7 +1813,7 @@ function renderFamilyTree() {
     <ul class="treeList">${ungrouped.map(householdNodeHtml).join('')}</ul>
   </li>` : '';
 
-  const noHouseholdUsers = allApprovedUsers.filter(u => !u.householdId);
+  const noHouseholdUsers = allApprovedUsers.filter(u => !userHouseholdIds(u).length);
   const noHouseholdSection = noHouseholdUsers.length ? `<li>
     <div class="treeNode branch">— No household —</div>
     <ul class="treeList">${noHouseholdUsers.map(personNodeHtml).join('')}</ul>
@@ -1816,15 +1842,18 @@ let unsubProfileFeed = null;
 function openProfile(uid) {
   const u = usersById[uid];
   if (!u) return;
-  const hh = u.householdId ? householdsById[u.householdId] : null;
-  const branchNames = hh ? branches.filter(b => (b.householdIds || []).includes(hh.id)).map(b => b.name) : [];
+  const myHhs = userHouseholdIds(u).map(id => householdsById[id]).filter(Boolean);
+  const branchNames = [...new Set(myHhs.flatMap(hh => branches.filter(b => (b.householdIds || []).includes(hh.id)).map(b => b.name)))];
+  const hhLines = myHhs.length
+    ? myHhs.map(hh => `<div class="hh">🏠 ${escapeHtml(hh.name)}${hh.responderId === u.id ? ' <span class="respBadge">responder</span>' : ''}</div>`).join('')
+    : '<div class="hh">No household set</div>';
   $('profileHeader').innerHTML = `
     <div style="display:flex; align-items:center; gap:14px">
       ${avatarHtml(u.name, u.photoUrl, 72)}
       <div>
         <div style="font-size:1.3em; font-weight:700">${escapeHtml(u.name)}${ageBadgeHtml(u)}</div>
         ${u.role === 'admin' ? '<div class="hh">⭐ Admin</div>' : ''}
-        ${hh ? `<div class="hh">🏠 ${escapeHtml(hh.name)}${hh.responderId === u.id ? ' <span class="respBadge">responder</span>' : ''}</div>` : '<div class="hh">No household set</div>'}
+        ${hhLines}
         ${branchNames.length ? `<div class="hh">🌳 ${branchNames.map(escapeHtml).join(', ')}</div>` : ''}
       </div>
     </div>`;
@@ -2004,13 +2033,26 @@ async function renderPushRow(errorMsg) {
 
 // ---------- Household self-service (responder edits their own household) ----------
 let myHouseholdEcState = {}; // extraContact id -> 'edit' | undefined
+let _editingMyHouseholdId = null; // which of possibly-several responder households is open in the modal
 
 function renderMyHousehold() {
   const btn = $('openMyHouseholdBtn');
-  if (!myHouseholdDoc || myHouseholdDoc.responderId !== currentUser.uid) { btn.style.display = 'none'; return; }
+  const myResponderHouseholds = myHouseholds.filter(h => h.responderId === currentUser.uid);
+  if (!myResponderHouseholds.length) { btn.style.display = 'none'; return; }
   btn.style.display = 'inline-flex';
-  const hh = myHouseholdDoc;
+  // Someone can be the responder of more than one household (e.g. running their own household
+  // plus helping an elderly relative's) — default to the first, remember the choice across
+  // re-renders, and fall back to the first again if the previously-open one stopped applying
+  // (e.g. they lost responder status there while the modal was open).
+  if (!_editingMyHouseholdId || !myResponderHouseholds.some(h => h.id === _editingMyHouseholdId)) {
+    _editingMyHouseholdId = myResponderHouseholds[0].id;
+  }
+  const hh = myResponderHouseholds.find(h => h.id === _editingMyHouseholdId);
   const body = $('myHouseholdBody');
+  const switcherHtml = myResponderHouseholds.length > 1 ? `
+    <div class="field"><label>Editing which household?</label>
+      <select id="mhWhichHousehold">${myResponderHouseholds.map(h => `<option value="${h.id}" ${h.id === hh.id ? 'selected' : ''}>🏠 ${escapeHtml(h.name)}</option>`).join('')}</select>
+    </div>` : '';
 
   const responderOptions = (hh.memberIds || []).map(uid => {
     const u = usersById[uid];
@@ -2046,7 +2088,19 @@ function renderMyHousehold() {
     return `<label class="chk"><input type="checkbox" class="mhBranchChk" value="${b.id}" ${checked}> 🌳 ${escapeHtml(b.name)}</label>`;
   }).join('') || '<span class="hh">No groups set up yet — an admin creates these in Admin → Branches, then any household can join one here.</span>';
 
+  const memberRows = (hh.memberIds || []).map(uid => {
+    const u = usersById[uid];
+    if (!u) return '';
+    return `<div class="contactRow">
+      <div class="nm">${escapeHtml(u.name)}${hh.responderId === uid ? ' <span class="respBadge">responder</span>' : ''}</div>
+      ${uid !== hh.responderId ? `<button class="editBtn mhRemoveMemberBtn" data-uid="${uid}">✕</button>` : ''}
+    </div>`;
+  }).join('') || '<div class="hh">None yet</div>';
+  const addableMembers = allApprovedUsers.filter(u => !(hh.memberIds || []).includes(u.id));
+  const addMemberOptions = addableMembers.map(u => `<option value="${u.id}">${escapeHtml(u.name)}</option>`).join('');
+
   body.innerHTML = `
+    ${switcherHtml}
     <div class="field"><label>Household name</label><input type="text" id="mhName" value="${escapeHtml(hh.name || '')}"></div>
     <div class="field"><label>Household phone</label><input type="tel" id="mhPhone" value="${escapeHtml(hh.phone || '')}"></div>
     <div class="field"><label>Household address</label><input type="text" id="mhAddress" value="${escapeHtml(hh.address || '')}"></div>
@@ -2054,6 +2108,18 @@ function renderMyHousehold() {
     <div class="field"><label>Responds for household</label><select id="mhResponder">${responderOptions}</select></div>
     <div class="field"><label>Groups (branches) this household belongs to</label><div class="chkGroup">${branchOptions}</div></div>
     <button class="btn small" id="mhSaveBtn">Save</button>
+
+    <div class="ecSection">
+      <div class="nm" style="font-size:13px">Members with an account</div>
+      <div style="margin-top:6px">${memberRows}</div>
+      ${addableMembers.length ? `
+      <div class="field" style="margin-top:10px"><label>Add an existing family member (they can belong to more than one household)</label>
+        <select id="mhAddMemberSelect"><option value="">— Choose someone —</option>${addMemberOptions}</select>
+      </div>
+      <button class="btn small secondary" id="mhAddMemberBtn">Add to household</button>
+      <div class="hh" id="mhAddMemberStatus" style="margin-top:4px"></div>
+      ` : '<div class="hh" style="margin-top:6px">Everyone approved is already a member here.</div>'}
+    </div>
 
     <div class="ecSection">
       <div class="nm" style="font-size:13px">Family members without their own account</div>
@@ -2074,6 +2140,36 @@ function renderMyHousehold() {
     </div>
   `;
 
+  if ($('mhWhichHousehold')) {
+    $('mhWhichHousehold').onchange = (e) => { _editingMyHouseholdId = e.target.value; renderMyHousehold(); };
+  }
+  if ($('mhAddMemberBtn')) {
+    $('mhAddMemberBtn').onclick = async () => {
+      const uid = $('mhAddMemberSelect').value;
+      if (!uid) return;
+      $('mhAddMemberStatus').textContent = 'Adding…';
+      try {
+        await httpsCallable(functions, 'updateHouseholdMembership')({ householdId: hh.id, userId: uid, action: 'add' });
+        // The live households listener may have already re-rendered this whole modal by the
+        // time this resolves (the write succeeding is what triggers the re-render) — the
+        // status element, or even this whole section, may no longer exist. Only touch it if
+        // it's still there.
+        if ($('mhAddMemberStatus')) $('mhAddMemberStatus').textContent = '';
+      } catch (err) {
+        if ($('mhAddMemberStatus')) $('mhAddMemberStatus').textContent = 'Could not add: ' + (err.message || err);
+      }
+    };
+  }
+  body.querySelectorAll('.mhRemoveMemberBtn').forEach(btn => {
+    btn.onclick = async () => {
+      if (!confirm('Remove this person from this household? They can be re-added any time, and nothing they\'ve posted is affected.')) return;
+      try {
+        await httpsCallable(functions, 'updateHouseholdMembership')({ householdId: hh.id, userId: btn.dataset.uid, action: 'remove' });
+      } catch (err) {
+        alert('Could not remove: ' + (err.message || err));
+      }
+    };
+  });
   $('mhSaveBtn').onclick = async () => {
     await updateDoc(doc(db, 'households', hh.id), {
       name: $('mhName').value.trim() || hh.name,
@@ -2744,7 +2840,7 @@ function initHouseholds() {
     households = []; householdsById = {};
     snap.forEach(d => { const h = { id: d.id, ...d.data() }; households.push(h); householdsById[d.id] = h; });
     households.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-    myHouseholdDoc = myDoc.householdId ? (householdsById[myDoc.householdId] || null) : null;
+    myHouseholds = userHouseholdIds(myDoc).map(id => householdsById[id]).filter(Boolean);
     renderContacts();
     renderMyHousehold();
     renderChannelList();
@@ -2903,28 +2999,27 @@ function renderHouseholdsAdmin() {
       const responderId = selected.includes(responderChoice) ? responderChoice : (selected[0] || null);
       const batch = writeBatch(db);
       batch.update(doc(db, 'households', hh.id), { memberIds: selected, responderId });
-      (hh.memberIds || []).filter(uid => !selected.includes(uid)).forEach(uid => batch.update(doc(db, 'users', uid), { householdId: null }));
-      selected.forEach(uid => {
-        batch.update(doc(db, 'users', uid), { householdId: hh.id });
-        // If this member was previously in a DIFFERENT household, clean that household's
-        // memberIds too — otherwise it keeps a stale reference (e.g. someone moving
-        // households after getting married would still show as a member of their old one).
-        const prevHouseholdId = usersById[uid] && usersById[uid].householdId;
-        const prevHH = prevHouseholdId && prevHouseholdId !== hh.id ? householdsById[prevHouseholdId] : null;
-        if (prevHH) {
-          const cleaned = (prevHH.memberIds || []).filter(id => id !== uid);
-          batch.update(doc(db, 'households', prevHouseholdId), {
-            memberIds: cleaned,
-            responderId: prevHH.responderId === uid ? (cleaned[0] || null) : prevHH.responderId
-          });
-        }
+      // Toggling someone into/out of THIS household only ever adds/removes THIS household from
+      // their own householdIds — any OTHER households they belong to are left alone, since a
+      // person can now belong to more than one at once (see userHouseholdIds()).
+      const prevSelected = new Set(hh.memberIds || []);
+      const nowSelected = new Set(selected);
+      allApprovedUsers.forEach(u => {
+        const was = prevSelected.has(u.id), now = nowSelected.has(u.id);
+        if (was === now) return;
+        const ids = userHouseholdIds(u);
+        const updated = now ? [...new Set([...ids, hh.id])] : ids.filter(id => id !== hh.id);
+        batch.update(doc(db, 'users', u.id), { householdIds: updated });
       });
       await batch.commit();
     };
     box.querySelector('.hhDelete').onclick = async () => {
-      if (!confirm(`Delete household "${hh.name}"? Members keep their accounts but lose the household link.`)) return;
+      if (!confirm(`Delete household "${hh.name}"? Members keep their accounts but lose this household link (any other households they belong to are unaffected).`)) return;
       const batch = writeBatch(db);
-      (hh.memberIds || []).forEach(uid => batch.update(doc(db, 'users', uid), { householdId: null }));
+      (hh.memberIds || []).forEach(uid => {
+        const u = usersById[uid];
+        batch.update(doc(db, 'users', uid), { householdIds: userHouseholdIds(u).filter(id => id !== hh.id) });
+      });
       batch.delete(doc(db, 'households', hh.id));
       await batch.commit();
     };
@@ -3215,23 +3310,67 @@ $('sendDigestNowBtn').onclick = async () => {
 // ---------- Profile editing (own info, or any member's if admin) ----------
 let _editingUserId = null;
 let _editingAvatarFile = null;
+// Households created from inside this modal, in this modal session, that the edited person has
+// already been added to (see epCreateHouseholdBtn) — a fresh household's join happens
+// immediately at creation time, not at Save, so this just keeps the checklist showing it as
+// checked even before the live households listener has delivered it back to the cache.
+let _epJustCreatedHouseholds = new Set();
+
+function renderEpHouseholdChecklist() {
+  const u = usersById[_editingUserId];
+  const currentIds = new Set([...(u ? userHouseholdIds(u) : []), ..._epJustCreatedHouseholds]);
+  $('epHouseholdChecklist').innerHTML = households.map(h =>
+    `<label class="chk"><input type="checkbox" class="epHhChk" value="${h.id}" ${currentIds.has(h.id) ? 'checked' : ''}> 🏠 ${escapeHtml(h.name)}</label>`
+  ).join('') || '<span class="hh">No households yet — create one below.</span>';
+}
+
 function openEditProfile(uid) {
   const u = usersById[uid];
   if (!u) return;
   _editingUserId = uid;
   _editingAvatarFile = null;
+  _epJustCreatedHouseholds = new Set();
   $('epAvatarStatus').textContent = '';
   $('epName').textContent = `Edit ${u.name}'s info`;
   $('epPhone').value = u.phone || '';
   $('epBirthdate').value = u.birthdate || '';
   $('epAvatarPreview').innerHTML = avatarHtml(u.name, u.photoUrl, 44);
-  const options = households.map(h => `<option value="${h.id}" ${u.householdId === h.id ? 'selected' : ''}>🏠 ${escapeHtml(h.name)}</option>`).join('');
-  $('epHousehold').innerHTML = `<option value="" ${!u.householdId ? 'selected' : ''}>— No household —</option>${options}<option value="__new__">+ Create a new household…</option>`;
+  $('epNewHouseholdName').value = '';
+  renderEpHouseholdChecklist();
   $('epHouseholdNote').textContent = uid === currentUser.uid
-    ? "Changing this joins/leaves that household for you. Creating a new one makes you its first member and responder."
-    : "Changing this joins/leaves that household on this person's behalf (you're doing this as admin).";
+    ? "Check/uncheck to join or leave a household — you can belong to more than one at once. Creating a new one makes you its first member and responder."
+    : "Check/uncheck to add or remove this person from a household on their behalf (you're doing this as admin).";
   $('editProfileModalBg').classList.add('open');
 }
+$('epCreateHouseholdBtn').onclick = async () => {
+  const name = $('epNewHouseholdName').value.trim();
+  if (!name || !_editingUserId) return;
+  const isSelf = _editingUserId === currentUser.uid;
+  try {
+    const ref = await addDoc(collection(db, 'households'), {
+      name, memberIds: isSelf ? [currentUser.uid] : [],
+      responderId: isSelf ? currentUser.uid : null,
+      phone: '', address: '', anniversary: null, extraContacts: [],
+      createdBy: currentUser.uid, createdAt: serverTimestamp()
+    });
+    if (isSelf) {
+      _epJustCreatedHouseholds.add(ref.id);
+      // Write the other side of the membership right away too — otherwise a Create followed by
+      // Cancel (instead of the main Save) would leave the household listing the creator as a
+      // member while the creator's own record doesn't list the household back, an inconsistency
+      // that would silently hide them from their own new household everywhere Contacts/Family
+      // Tree/etc. read userHouseholdIds() from.
+      await updateDoc(doc(db, 'users', currentUser.uid), { householdIds: [...userHouseholdIds(myDoc), ref.id] });
+    }
+    $('epNewHouseholdName').value = '';
+    $('epHouseholdNote').textContent = isSelf
+      ? `Created "${name}" and added you to it.`
+      : `Created "${name}". Check it in the list above to add ${usersById[_editingUserId].name} to it.`;
+    renderEpHouseholdChecklist();
+  } catch (err) {
+    $('epHouseholdNote').textContent = 'Could not create household: ' + (err.message || err);
+  }
+};
 $('epCancelBtn').onclick = () => $('editProfileModalBg').classList.remove('open');
 $('epAvatarBtn').onclick = () => $('epAvatarInput').click();
 $('epAvatarInput').addEventListener('change', (e) => {
@@ -3345,54 +3484,31 @@ $('epSaveBtn').onclick = async () => {
       return;
     }
   }
-  const currentHouseholdId = usersById[_editingUserId] ? usersById[_editingUserId].householdId : null;
-  let targetHouseholdId = $('epHousehold').value || null;
-
-  // Track the new household's *actual* starting member list ourselves rather than trusting
-  // householdsById — if we just created it, the live listener won't have delivered it back
-  // yet, so the cache would read as "unknown" and we'd wrongly skip adding the member.
-  let newHouseholdStartMembers = null;
-
-  if (targetHouseholdId === '__new__') {
-    const name = prompt('New household name:');
-    if (!name || !name.trim()) { $('epHouseholdNote').textContent = 'Household unchanged — no name entered.'; targetHouseholdId = currentHouseholdId; }
-    else {
-      try {
-        const isSelf = _editingUserId === currentUser.uid;
-        newHouseholdStartMembers = isSelf ? [currentUser.uid] : [];
-        const ref = await addDoc(collection(db, 'households'), {
-          name: name.trim(), memberIds: newHouseholdStartMembers,
-          responderId: isSelf ? currentUser.uid : null,
-          phone: '', address: '', anniversary: null, extraContacts: [],
-          createdBy: currentUser.uid, createdAt: serverTimestamp()
-        });
-        targetHouseholdId = ref.id;
-      } catch (err) {
-        $('epHouseholdNote').textContent = 'Could not create household: ' + (err.message || err);
-        return;
-      }
-    }
-  }
+  const editedUser = usersById[_editingUserId];
+  const beforeIds = new Set(editedUser ? userHouseholdIds(editedUser) : []);
+  const checkedIds = new Set(Array.from(document.querySelectorAll('.epHhChk:checked')).map(c => c.value));
+  _epJustCreatedHouseholds.forEach(id => checkedIds.add(id)); // freshly-created ones are already checked, but be safe
 
   try {
     const batch = writeBatch(db);
-    if (targetHouseholdId !== currentHouseholdId) {
-      if (currentHouseholdId && householdsById[currentHouseholdId]) {
-        const oldMembers = (householdsById[currentHouseholdId].memberIds || []).filter(id => id !== _editingUserId);
-        batch.update(doc(db, 'households', currentHouseholdId), { memberIds: oldMembers });
-      }
-      if (targetHouseholdId) {
-        const newMembers = newHouseholdStartMembers !== null
-          ? newHouseholdStartMembers
-          : ((householdsById[targetHouseholdId] && householdsById[targetHouseholdId].memberIds) || []);
-        if (!newMembers.includes(_editingUserId)) batch.update(doc(db, 'households', targetHouseholdId), { memberIds: [...newMembers, _editingUserId] });
-      }
-      payload.householdId = targetHouseholdId || null;
+    // One write per household whose checked state actually changed — same self-toggle-safe
+    // pattern as the branch checklist: each household doc only ever has THIS person's own
+    // presence added/removed, one doc at a time, never touching anyone else's membership.
+    for (const h of households) {
+      const was = beforeIds.has(h.id);
+      const now = checkedIds.has(h.id);
+      if (was === now) continue;
+      const currentMemberIds = (householdsById[h.id] && householdsById[h.id].memberIds)
+        || (_epJustCreatedHouseholds.has(h.id) ? [_editingUserId] : []);
+      const updated = now
+        ? (currentMemberIds.includes(_editingUserId) ? currentMemberIds : [...currentMemberIds, _editingUserId])
+        : currentMemberIds.filter(id => id !== _editingUserId);
+      batch.update(doc(db, 'households', h.id), { memberIds: updated });
     }
-    batch.update(doc(db, 'users', _editingUserId), payload);
+    batch.update(doc(db, 'users', _editingUserId), { ...payload, householdIds: [...checkedIds] });
     await batch.commit();
   } catch (err) {
-    $('epHouseholdNote').textContent = 'Could not save household change: ' + (err.message || err);
+    $('epHouseholdNote').textContent = 'Could not save household changes: ' + (err.message || err);
     return;
   }
   $('editProfileModalBg').classList.remove('open');
