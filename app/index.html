@@ -307,9 +307,18 @@
   .empty { color: var(--ink-soft); text-align: center; padding: 40px 12px; font-size: 14px; }
 
   /* Messages */
-  #channelList { display: flex; gap: 8px; overflow-x: auto; padding: 4px 0 12px; }
-  #channelList button { flex-shrink: 0; padding: 7px 14px; border-radius: 20px; border: 1px solid var(--border); background: var(--card); font-size: 13px; cursor: pointer; }
+  #channelList { display: flex; gap: 8px; overflow-x: auto; padding: 4px 0 12px; align-items: center; }
+  #channelList button { flex-shrink: 0; padding: 7px 14px; border-radius: 20px; border: 1px solid var(--border); background: var(--card); font-size: 13px; cursor: pointer; display: flex; align-items: center; gap: 6px; }
+  /* DM pills get a permanent tint + avatar, even when inactive, so a private 1:1 chat is
+     visually distinct from a group (Whole Family/household/branch) pill at a glance — not just
+     by reading the 💬 prefix, which was easy to miss (see CLAUDE.md "Active-conversation
+     clarity" for why this was added). */
+  #channelList button.dmPill { background: var(--accent-soft); border-color: var(--accent-soft); }
   #channelList button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  #channelDivider { flex-shrink: 0; width: 1px; align-self: stretch; background: var(--border); margin: 2px 2px; }
+  #activeConvoHeader { display: flex; align-items: center; gap: 10px; padding: 10px 12px; margin-bottom: 10px; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); }
+  #activeConvoHeader .acTitle { font-weight: 700; font-size: 15px; }
+  #activeConvoHeader .acSubtitle { font-size: 12px; color: var(--ink-soft); }
   #msgList { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
   .msg { max-width: 80%; padding: 9px 12px; border-radius: 12px; background: var(--card); border: 1px solid var(--border); }
   .msg .who { font-size: 11px; color: var(--ink-soft); margin-bottom: 2px; }
@@ -448,6 +457,7 @@
       <!-- Messages -->
       <section class="tabpane active" id="pane-messages">
         <div id="channelList"></div>
+        <div id="activeConvoHeader"></div>
         <div id="msgList"></div>
         <div class="empty" id="msgEmpty" style="display:none">No messages yet — say hi 👋</div>
       </section>
@@ -1132,27 +1142,66 @@ function initChannels() {
   loadMessages();
 }
 
+// Returns {icon, title, subtitle, isDM} describing whatever activeChannelId currently points
+// at — the single source of truth for both the pill row and the sticky #activeConvoHeader, so
+// the two can never disagree about what "active" means.
+function activeConvoInfo() {
+  if (activeChannelId === 'family') {
+    return { icon: '👪', title: 'Whole Family', subtitle: 'Everyone in the family can see this', isDM: false };
+  }
+  if (activeChannelId.startsWith('hh_') && myHouseholdDoc) {
+    return { icon: '🏠', title: myHouseholdDoc.name, subtitle: 'Household chat — just your household', isDM: false };
+  }
+  if (activeChannelId.startsWith('br_')) {
+    const br = branches.find(b => 'br_' + b.id === activeChannelId);
+    return { icon: '🌳', title: br ? br.name : 'Branch', subtitle: 'Branch chat — every household in this group', isDM: false };
+  }
+  const dm = dmChannels.find(d => d.id === activeChannelId);
+  const otherUid = dm && (dm.participantIds || []).find(uid => uid !== currentUser.uid);
+  const otherUser = otherUid && usersById[otherUid];
+  return { icon: '🔒', title: otherUser ? otherUser.name : 'Direct Message', subtitle: 'Private — only the two of you can see this', isDM: true };
+}
+
+function renderActiveConvoHeader() {
+  const info = activeConvoInfo();
+  $('activeConvoHeader').innerHTML = `
+    <span style="font-size:22px">${info.icon}</span>
+    <div><div class="acTitle">${escapeHtml(info.title)}</div><div class="acSubtitle">${escapeHtml(info.subtitle)}</div></div>
+  `;
+}
+
 function renderChannelList() {
   $('channelList').innerHTML = '';
-  const chBtn = (id, label) => {
+  const chBtn = (id, innerHtml, { isDM } = {}) => {
     const b = document.createElement('button');
-    b.textContent = label;
+    b.innerHTML = innerHtml;
     b.dataset.id = id;
-    b.className = id === activeChannelId ? 'active' : '';
+    b.className = (id === activeChannelId ? 'active' : '') + (isDM ? ' dmPill' : '');
     b.onclick = () => { activeChannelId = id; renderChannelList(); loadMessages(); };
     return b;
   };
-  $('channelList').appendChild(chBtn('family', 'Whole Family'));
-  if (myHouseholdDoc) $('channelList').appendChild(chBtn('hh_' + myHouseholdDoc.id, '🏠 ' + myHouseholdDoc.name));
+  $('channelList').appendChild(chBtn('family', '👪 Whole Family'));
+  if (myHouseholdDoc) $('channelList').appendChild(chBtn('hh_' + myHouseholdDoc.id, '🏠 ' + escapeHtml(myHouseholdDoc.name)));
   if (myDoc.householdId) {
     branches.filter(b => (b.householdIds || []).includes(myDoc.householdId))
-      .forEach(b => $('channelList').appendChild(chBtn('br_' + b.id, '🌳 ' + b.name)));
+      .forEach(b => $('channelList').appendChild(chBtn('br_' + b.id, '🌳 ' + escapeHtml(b.name))));
+  }
+  if (dmChannels.length) {
+    const divider = document.createElement('div');
+    divider.id = 'channelDivider';
+    divider.title = 'Private conversations below';
+    $('channelList').appendChild(divider);
   }
   dmChannels.forEach(dm => {
     const otherUid = (dm.participantIds || []).find(uid => uid !== currentUser.uid);
     const otherUser = otherUid && usersById[otherUid];
-    $('channelList').appendChild(chBtn(dm.id, '💬 ' + (otherUser ? otherUser.name : 'Direct Message')));
+    const avatar = avatarHtml(otherUser ? otherUser.name : '?', otherUser && otherUser.photoUrl, 18);
+    const btn = chBtn(dm.id, `${avatar} ${escapeHtml(otherUser ? otherUser.name : 'Direct Message')}`, { isDM: true });
+    $('channelList').appendChild(btn);
   });
+  const activeBtn = $('channelList').querySelector('button.active');
+  if (activeBtn) activeBtn.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+  renderActiveConvoHeader();
 }
 
 function dmChannelId(uidA, uidB) { return 'dm_' + [uidA, uidB].sort().join('_'); }

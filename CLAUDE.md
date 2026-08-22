@@ -583,6 +583,33 @@ Reactivate from Admin → 🚫 Deactivated accounts.
   self-deactivating — were all correctly denied by the pre-existing rule (no rule changes were
   made, so this also served as regression coverage for it).
 
+## Active-conversation clarity
+
+Ryan's dad got confused about which conversation he was in — Whole Family vs. a DM — because the
+channel switcher (`#channelList`) was a horizontally-scrolling row of same-looking pills, the only
+difference being a small emoji prefix and an accent-color fill on whichever one happened to be
+active. Easy to miss, especially once the row has enough pills to scroll.
+
+- **A sticky `#activeConvoHeader` above the message list** now always names the open conversation
+  in large text, plus a one-line plain-English subtitle of who can see it — "👪 Whole Family —
+  Everyone in the family can see this," "🏠 The Martins — Household chat — just your household,"
+  "🌳 [Branch] — Branch chat — every household in this group," or "🔒 [Name] — Private — only the
+  two of you can see this." `activeConvoInfo()` is the single source of truth this header and the
+  pill row both read from, so they can never disagree about what "active" means.
+- **DM pills are now visually distinct from group pills even when inactive** — a permanent
+  `--accent-soft` tint (`.dmPill`) plus a small avatar circle (`avatarHtml()`) instead of just a
+  💬 emoji, with a thin vertical divider (`#channelDivider`) separating the group channels (Whole
+  Family/household/branch) from the private ones in the scrollable row. The intent: a private 1:1
+  chat should look categorically different from a group chat, not just differently labeled.
+  "Whole Family" also got an explicit 👪 icon (it had none before) so all four conversation types
+  now carry a consistent icon+color language.
+- The active pill now auto-scrolls into view (`scrollIntoView`) whenever the conversation changes,
+  so switching via `startDM()` (e.g. tapping 💬 in Contacts or a profile page) doesn't leave the
+  now-active pill scrolled off-screen with no visible indication anything changed.
+- Verified against the emulator: all four conversation types (Whole Family, household, branch, DM)
+  produce the correct icon/title/subtitle in the header; the DM pill correctly carries `.dmPill`
+  and shows the other person's real avatar; the divider renders between group and DM pills.
+
 ## PWA install (manifest + icons)
 
 Previously "Add to Home Screen" just bookmarked the page — there was no `manifest.json` at all,
