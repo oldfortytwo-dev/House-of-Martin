@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>House of Martin</title>
 <meta name="theme-color" content="#3b2f2f">
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/icon-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@600&family=Fredoka:wght@500;600&family=JetBrains+Mono:wght@400;600&family=Playfair+Display:wght@600;700&family=Special+Elite&display=swap" rel="stylesheet">
@@ -1736,6 +1738,13 @@ function urlBase64ToUint8Array(base64String) {
 
 function pushConfigured() { return VAPID_PUBLIC_KEY.indexOf('REPLACE_WITH') !== 0; }
 function browserSupportsPush() { return 'serviceWorker' in navigator && 'PushManager' in window; }
+
+// Registering the service worker (but NOT requesting notification permission — that stays
+// gated behind the explicit "Enable push notifications" button in enablePush()) is what lets
+// Chrome/Android treat this as a real installable PWA with an "Add to Home Screen" → real app
+// icon flow, instead of just bookmarking the page. Registration itself never prompts anyone
+// for anything, so it's safe to do unconditionally on every load.
+if (browserSupportsPush()) navigator.serviceWorker.register('/push-sw.js').catch(() => {});
 
 async function currentPushSubscription() {
   if (!pushConfigured() || !browserSupportsPush()) return null;
