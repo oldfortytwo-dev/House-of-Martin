@@ -401,6 +401,17 @@
   .chkGroup { display: flex; flex-direction: column; gap: 6px; max-height: 160px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; padding: 8px; margin-top: 6px; }
   .chk { font-size: 13px; display: flex; align-items: center; gap: 6px; }
   .hhRsvpBlock { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border); }
+  /* Event cards pack a lot in (RSVP, household RSVP, potluck sign-ups) — give the household
+     RSVP block and potluck section their own tinted sub-card treatment instead of just a
+     dashed rule, so the card reads as distinct grouped sections rather than one long stack of
+     equally-weighted rows. Scoped to .eventCard specifically since .ecSection/.hhRsvpBlock are
+     reused in several other, unrelated contexts (household editor, admin panel) that shouldn't
+     pick this up. */
+  .eventCard .hhRsvpBlock, .eventCard .ecSection {
+    background: var(--accent-soft); border-top: none; border-radius: var(--radius);
+    padding: 10px 12px; margin-top: 12px;
+  }
+  .rsvpLabel { font-size: 12px; font-weight: 600; color: var(--ink-soft); margin-top: 10px; margin-bottom: 2px; }
   .noAccountBadge { font-size: 10px; background: var(--border); color: var(--ink-soft); padding: 2px 6px; border-radius: 8px; margin-left: 6px; font-weight: 600; vertical-align: middle; }
   .ecSection { margin-top: 14px; padding-top: 10px; border-top: 1px dashed var(--border); }
   code { background: var(--accent-soft); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
@@ -504,7 +515,14 @@
 
       <!-- Events -->
       <section class="tabpane" id="pane-events">
-        <div class="card" id="digestCard">
+        <button class="btn small secondary" id="openDigestBtn" style="margin-bottom:10px; width:auto">📣 Add to This Week's Family Email</button>
+        <div id="eventList"></div>
+        <div class="empty" id="eventEmpty" style="display:none">No events yet. Tap + to plan one.</div>
+      </section>
+
+      <!-- Weekly digest submission modal -->
+      <div class="modalBg" id="digestModalBg">
+        <div class="modalSheet">
           <h3 style="margin-top:0">📣 Add to This Week's Family Email</h3>
           <p class="hh">Anything you'd like included in the next weekly digest email — an announcement,
             a reminder, a for-sale item, anything. Goes out to the whole family.</p>
@@ -513,10 +531,9 @@
             <button class="btn small" id="digestSubmitBtn">Add</button>
           </div>
           <div id="digestPending" style="margin-top:10px"></div>
+          <button class="btn secondary" id="digestCloseBtn" style="margin-top:14px">Close</button>
         </div>
-        <div id="eventList"></div>
-        <div class="empty" id="eventEmpty" style="display:none">No events yet. Tap + to plan one.</div>
-      </section>
+      </div>
 
       <!-- Contacts -->
       <section class="tabpane" id="pane-contacts">
@@ -589,28 +606,7 @@
 
       <!-- Wall -->
       <section class="tabpane" id="pane-photos">
-        <div class="card" id="wallComposer">
-          <h3 style="margin-top:0">🧱 Family Wall</h3>
-          <textarea id="wallText" class="bulkPaste" rows="2" placeholder="What's on your mind?"></textarea>
-          <div style="display:flex; gap:8px; margin-top:8px; align-items:center; flex-wrap:wrap">
-            <input type="file" id="wallPhotoInput" accept="image/*" style="display:none">
-            <button class="btn small secondary" id="wallAddPhotoBtn">📷 Add photo</button>
-            <span class="hh" id="wallPhotoPreviewName"></span>
-          </div>
-          <div class="field" style="margin-top:10px"><label>Post to</label>
-            <select id="wallAudienceType">
-              <option value="everyone">Everyone in the family</option>
-              <option value="custom">Choose specific people/groups</option>
-            </select>
-          </div>
-          <div id="wallAudiencePicker" style="display:none">
-            <div class="field"><label>Families</label><div id="wallHouseholdPicker" class="chkGroup"></div></div>
-            <div class="field"><label>Groups (branches)</label><div id="wallBranchPicker" class="chkGroup"></div></div>
-            <div class="field"><label>Individuals</label><div id="wallIndividualPicker" class="chkGroup"></div></div>
-          </div>
-          <button class="btn small" id="wallPostBtn">Post</button>
-          <div class="uploadStatus" id="wallPostStatus"></div>
-        </div>
+        <button class="btn small secondary" id="openWallComposerBtn" style="margin-bottom:10px; width:auto">🧱 Post to the Family Wall</button>
         <div id="wallFeed"></div>
         <div class="empty" id="wallEmpty" style="display:none">Nothing on the wall yet — be the first to post!</div>
 
@@ -622,6 +618,35 @@
           <div class="empty" id="albumEmpty" style="display:none">No albums yet. Tap + to start one.</div>
         </div>
       </section>
+
+      <!-- Wall post composer modal -->
+      <div class="modalBg" id="wallComposerModalBg">
+        <div class="modalSheet">
+          <div class="card" id="wallComposer">
+            <h3 style="margin-top:0">🧱 Family Wall</h3>
+            <textarea id="wallText" class="bulkPaste" rows="2" placeholder="What's on your mind?"></textarea>
+            <div style="display:flex; gap:8px; margin-top:8px; align-items:center; flex-wrap:wrap">
+              <input type="file" id="wallPhotoInput" accept="image/*" style="display:none">
+              <button class="btn small secondary" id="wallAddPhotoBtn">📷 Add photo</button>
+              <span class="hh" id="wallPhotoPreviewName"></span>
+            </div>
+            <div class="field" style="margin-top:10px"><label>Post to</label>
+              <select id="wallAudienceType">
+                <option value="everyone">Everyone in the family</option>
+                <option value="custom">Choose specific people/groups</option>
+              </select>
+            </div>
+            <div id="wallAudiencePicker" style="display:none">
+              <div class="field"><label>Families</label><div id="wallHouseholdPicker" class="chkGroup"></div></div>
+              <div class="field"><label>Groups (branches)</label><div id="wallBranchPicker" class="chkGroup"></div></div>
+              <div class="field"><label>Individuals</label><div id="wallIndividualPicker" class="chkGroup"></div></div>
+            </div>
+            <button class="btn small" id="wallPostBtn">Post</button>
+            <div class="uploadStatus" id="wallPostStatus"></div>
+          </div>
+          <button class="btn secondary" id="wallComposerCloseBtn" style="margin-top:14px">Close</button>
+        </div>
+      </div>
 
       <!-- Admin -->
       <section class="tabpane" id="pane-admin">
@@ -1447,6 +1472,7 @@ function initDigestSubmissions() {
 }
 
 function renderDigestSubmissions() {
+  $('openDigestBtn').textContent = '📣 Add to This Week\'s Family Email' + (digestSubmissions.length ? ` (${digestSubmissions.length})` : '');
   const wrap = $('digestPending');
   if (!digestSubmissions.length) { wrap.innerHTML = '<div class="hh">Nothing queued yet for this week\'s email.</div>'; return; }
   wrap.innerHTML = digestSubmissions.map(s => `
@@ -1468,6 +1494,8 @@ $('digestSubmitBtn').onclick = async () => {
   });
   $('digestInput').value = '';
 };
+$('openDigestBtn').onclick = () => $('digestModalBg').classList.add('open');
+$('digestCloseBtn').onclick = () => $('digestModalBg').classList.remove('open');
 $('digestInput').addEventListener('keydown', e => { if (e.key === 'Enter') $('digestSubmitBtn').click(); });
 
 function initEvents() {
@@ -1492,6 +1520,7 @@ function renderEventCard(id, ev, container) {
     <div class="when">${whenStr}${ev.where ? ' · ' + escapeHtml(ev.where) : ''}</div>
     <div class="when">Hosted by ${escapeHtml(ev.hostName || '')}</div>
     <div class="when">Invited: ${escapeHtml(describeAudience(ev))}</div>
+    <div class="rsvpLabel">Your RSVP</div>
     <div class="rsvpRow rsvpMine" data-eid="${id}">
       <button data-status="yes">✅ Yes</button>
       <button data-status="maybe">🤔 Maybe</button>
@@ -2584,11 +2613,17 @@ function likeButtonHtml(p, label) {
   const counts = {};
   Object.values(reactions).forEach(t => { counts[t] = (counts[t] || 0) + 1; });
   const total = Object.keys(reactions).length;
-  const topEmoji = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([t]) => reactionMeta(t).emoji).join('');
+  // Only surface OTHER people's top reaction emoji here — the trigger button already shows
+  // mine, so repeating it right next to itself read as a visual glitch (two identical hearts
+  // side by side) rather than two distinct controls. If everyone who reacted picked the same
+  // type I did, there's nothing left worth calling out separately; just show the count.
+  const othersCounts = { ...counts };
+  if (mineType) { othersCounts[mineType] -= 1; if (othersCounts[mineType] <= 0) delete othersCounts[mineType]; }
+  const topOthersEmoji = Object.entries(othersCounts).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([t]) => reactionMeta(t).emoji).join('');
   const labelPart = label ? ' ' + escapeHtml(mine ? mine.label : label) : '';
   return `<span class="wallReactWrap">
     <button class="wallLikeBtn${mine ? ' liked' : ''}">${mine ? mine.emoji : '🤍'}${labelPart}</button>
-    <button class="wallReactMore" title="React">${topEmoji}${total ? ' ' + total : ''}▾</button>
+    <button class="wallReactMore" title="React">${topOthersEmoji}${total ? ' ' + total : ''}▾</button>
     <div class="wallReactPicker" style="display:none">${REACTIONS.map(r => `<button class="wallReactOpt${mineType === r.type ? ' active' : ''}" data-type="${r.type}" title="${r.label}">${r.emoji}</button>`).join('')}</div>
   </span>`;
 }
@@ -2761,10 +2796,13 @@ $('wallPostBtn').onclick = async () => {
     $('wallAudienceType').value = 'everyone';
     $('wallAudiencePicker').style.display = 'none';
     document.querySelectorAll('#wallHouseholdPicker input, #wallBranchPicker input, #wallIndividualPicker input').forEach(c => c.checked = false);
+    $('wallComposerModalBg').classList.remove('open');
   } catch (err) {
     $('wallPostStatus').textContent = 'Failed to post: ' + (err.message || err);
   }
 };
+$('openWallComposerBtn').onclick = () => $('wallComposerModalBg').classList.add('open');
+$('wallComposerCloseBtn').onclick = () => $('wallComposerModalBg').classList.remove('open');
 
 function openAlbum(albumId, title) {
   _openAlbumId = albumId;

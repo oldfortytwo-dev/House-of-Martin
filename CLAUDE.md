@@ -415,6 +415,45 @@ pushing the actual directory down.
   confirmed rendering the right component with the right item counts), persists through save, and
   survives a full page reload.
 
+## General polish pass (2026-08-22)
+
+Following an actual audit of the app's screens (not a specific bug report — Ryan's "app feels
+clunky" assessment, so this session did the evaluation itself rather than waiting for a list).
+Screenshots weren't rendering in the local Browser tool that day, so the audit was done
+structurally instead — reading the actual DOM/CSS for each tab, which is at least as reliable
+given this codebase was already being read/written directly all session. Three concrete,
+unrelated findings, all fixed:
+
+- **Composer/form cards permanently pinned above content, in two more places** — the same root
+  issue already fixed once for "Edit My Household" (see "Contacts layout" above) turned out to
+  recur: the Events tab's "📣 Add to This Week's Family Email" form and the Wall tab's post
+  composer both sat permanently expanded above the actual content (events list / Wall feed),
+  pushing what people came for below a form most visits don't need. Both converted to the same
+  collapsed-button-opens-a-modal pattern: `#openDigestBtn`/`#digestModalBg` and
+  `#openWallComposerBtn`/`#wallComposerModalBg`. The digest button also grows a pending-count
+  badge (`renderDigestSubmissions()` sets its text), and posting from the Wall modal now closes
+  it automatically on success instead of leaving it open.
+- **Reaction buttons visually duplicated themselves** — on a post you'd reacted to, the trigger
+  button ("❤️ Love") and the "more/picker" button ("❤️ 1▾") showed the *same* emoji right next
+  to each other, reading as a glitch rather than two distinct controls. Fixed in
+  `likeButtonHtml()`: the "more" button now only surfaces *other* people's top reaction emoji
+  (subtracting the viewer's own from the tally first) — if everyone who reacted picked the same
+  type the viewer did, there's nothing left worth calling out separately, so it just shows the
+  count.
+- **Event cards had no visual hierarchy** — title, when/where, host, invited-audience, your
+  RSVP, the household RSVP block, RSVP counts, and the potluck sign-up section all sat at equal
+  visual weight in one long stack. Added a "Your RSVP" label above the individual RSVP row for
+  context, and gave the household-RSVP block and potluck section a tinted, rounded sub-card
+  treatment (`.eventCard .hhRsvpBlock, .eventCard .ecSection` — deliberately scoped to
+  `.eventCard` specifically, since the underlying `.ecSection`/`.hhRsvpBlock` classes are reused
+  in several unrelated contexts like the household editor and admin panel that shouldn't pick
+  this up) instead of just a dashed divider line, so the card reads as distinct grouped sections.
+- Verified against the emulator: both composer modals open/close correctly and the digest badge
+  count updates live; posting from the Wall modal closes it and the new post appears in the feed
+  immediately; the reaction fix confirmed directly in the rendered feed (Bob's post, reacted to
+  by Ryan with "love", correctly showed "❤️ Love" / "1▾" with no duplicate heart); no new
+  console errors beyond the already-documented pre-existing transient reload-race pattern.
+
 ## Households & Branches — how it actually works
 
 Came up because the model wasn't obvious from using the app — worth re-reading before touching
@@ -838,15 +877,17 @@ app this size; the PWA install (real manifest + icon, see "PWA install" above) c
   install" above) — the manifest's `name`/`short_name`, the page `<title>`, and every in-app
   reference to "House of Martin" are all still exactly as-is until an explicit decision is made.
 - **General polish pass — app feels clunky, both aesthetically and functionally.** Ryan's own
-  assessment, not a specific bug report. Two concrete areas addressed so far — see "Contacts
-  layout" and "Households & Branches — how it actually works" / "Multi-household membership"
-  above (the "drop-down to add someone from the app" request turned out to be about the
-  household editor specifically, and led to the bigger multi-household-membership change once
-  Ryan confirmed that's what he actually wanted, not just a same-model convenience dropdown).
-  Still open: broader aesthetic pass beyond Contacts and the household editor specifically — no
-  other concrete areas identified yet. The Wall audience picker and Event invite picker weren't
-  touched in this pass (they were never the actual complaint — the household editor was) and
-  remain plain `<select>`s if they ever do come up as their own issue.
+  assessment, not a specific bug report. Addressed so far — see "Contacts layout", "Households &
+  Branches — how it actually works" / "Multi-household membership", and "General polish pass
+  (2026-08-22)" above (the "drop-down to add someone from the app" request turned out to be
+  about the household editor specifically, and led to the bigger multi-household-membership
+  change once Ryan confirmed that's what he actually wanted; the 2026-08-22 pass was a real
+  structural/DOM audit of every tab, not a guess, and fixed three findings — the composer-cards-
+  pinned-above-content pattern recurring in Events and Wall, duplicate reaction-button hearts,
+  and event-card visual hierarchy). Still open: no further concrete areas identified yet — the
+  next step, if wanted, is another audit pass (Admin tab specifically wasn't covered) or waiting
+  for Ryan to flag something specific. The Wall audience picker and Event invite picker remain
+  plain `<select>`s — never the actual complaint, so intentionally untouched.
 
 ## Working Style / Preferences
 
