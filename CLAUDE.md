@@ -628,8 +628,9 @@ listener doesn't start until the modal is actually opened).
 ## Notifications
 
 A 🔔 bell in the header (unread-count badge) opens a list of who reacted to or commented on
-your Wall posts — including thread activity (someone commenting on a post you'd already
-commented on, not just the post's original author).
+your Wall posts (including thread activity — someone commenting on a post you'd already
+commented on, not just the post's original author) or sent you a DM — see "Message
+notifications" below for that last one, added later than the other two.
 
 - **Reaction notifications** use a deterministic doc id (`reaction_{postId}_{fromUserId}`, see
   `notifDocId()`) instead of an auto-generated one: switching your reaction overwrites the same
@@ -656,6 +657,45 @@ commented on, not just the post's original author).
   stayed; clicking a notification correctly flipped it to read and dropped the badge count; and
   two adversarial writes — impersonating a different `fromUserId`, and a self-addressed
   `forUserId == fromUserId` notification — were both correctly denied.
+
+### Message notifications (added 2026-08-22 — DMs were previously completely silent)
+
+Ryan reported receiving a DM with zero notification, in-app or push, despite push being enabled.
+Root cause: the entire notification system above (bell + push) was built exclusively for Wall
+reactions/comments — `sendMessage()` never wrote a `notifications/{id}` doc at all, so a DM (or
+any chat message) has never triggered anything, ever. Not a bug in the push pipeline itself
+(proven working by the reaction/comment path) — a missing feature.
+
+- **Scoped to DMs only, not group channels** (Whole Family/household/branch chat) — a deliberate
+  choice, not an oversight: notifying every recipient on every message in a busy group channel
+  risks being genuinely noisy, whereas a DM going unnoticed defeats the point of it being private.
+  If group-channel message notifications are wanted later, `notifyDmMessage()` is the pattern to
+  extend (see its `if (activeChannelId.startsWith('dm_'))` guard in `sendMessage()`) — the
+  recipient list would just be `channels/{id}.participantIds` filtered to exclude the sender
+  instead of a single `find()`.
+- `notifyDmMessage(channelId, text)`: looks up the channel doc's `participantIds` directly
+  (`getDoc`, not the `dmChannels` cache) specifically so it's correct even for the very first
+  message in a brand-new DM, before the recipient-side listener would have had time to deliver
+  the channel back into any cache. Writes a `type: 'message'` notification with `channelId` (not
+  `postId` — there's no post involved) and a `textPreview`.
+- `notifRowHtml()` and `sendPushOnNotification`'s title/body/tag logic both extended with a third
+  branch for `type === 'message'` (previously only reaction/else-assumed-comment).
+- **Clicking a message notification now navigates straight to that DM conversation**, not just
+  marking it read — a genuinely more useful action for a message than for a reaction/comment,
+  where the destination (the Wall, one tab away) is already obvious. Extracted the tab-switch/
+  channel-open logic that `startDM()` already had into a shared `openChannel(channelId)` so both
+  call sites (starting a fresh DM from a profile, and opening one from a notification) share one
+  implementation instead of duplicating it.
+- **Known simplification, not fixed**: a message always notifies the recipient, even if they're
+  currently looking at that exact conversation. The sender has no visibility into the recipient's
+  UI state to suppress it, and over-notifying is a much smaller problem than the bug being fixed
+  (under-notifying, i.e. never at all) — not worth the complexity for this pass.
+- Verified against the emulator end-to-end: Bob DMing Alice correctly created a `notifications`
+  doc, correctly triggered `sendPushOnNotification` (confirmed via emulator logs — it completed
+  without error; the actual push send itself short-circuits harmlessly when the recipient has no
+  `pushSubscriptions`, same as any other notification type), Alice's bell badge updated live to
+  "1" with the right preview text, and clicking the notification correctly opened the exact DM
+  conversation with Bob's message visible.
 
 ### Push notifications (real browser/OS notifications when the app is closed)
 

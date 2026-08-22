@@ -244,9 +244,12 @@ exports.sendPushOnNotification = onDocumentCreated({ document: 'notifications/{i
 
   const title = n.type === 'reaction'
     ? `${n.fromUserName} reacted to your post`
+    : n.type === 'message'
+    ? `${n.fromUserName} sent you a message`
     : `${n.fromUserName} commented on your post`;
-  const body = n.type === 'comment' ? (n.textPreview || '') : '';
-  const payload = JSON.stringify({ title, body, url: '/', tag: `notif_${n.postId}` });
+  const body = (n.type === 'comment' || n.type === 'message') ? (n.textPreview || '') : '';
+  const tag = n.type === 'message' ? `notif_${n.channelId}` : `notif_${n.postId}`;
+  const payload = JSON.stringify({ title, body, url: '/', tag });
 
   const results = await Promise.allSettled(subs.map(s => webpush.sendNotification(s, payload)));
   // A 404/410 means the browser/OS has permanently invalidated that subscription (uninstalled,

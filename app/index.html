@@ -1347,8 +1347,10 @@ function renderChannelList() {
 
 function dmChannelId(uidA, uidB) { return 'dm_' + [uidA, uidB].sort().join('_'); }
 
-function startDM(otherUid) {
-  activeChannelId = dmChannelId(currentUser.uid, otherUid);
+// Switches to the Messages tab and opens a specific channel — shared by startDM() (from a
+// profile/contact) and clicking a message notification (which already knows the channel id).
+function openChannel(channelId) {
+  activeChannelId = channelId;
   document.querySelectorAll('nav.tabbar button').forEach(b => b.classList.remove('active'));
   const msgTab = document.querySelector('nav.tabbar button[data-tab="messages"]');
   msgTab.classList.add('active');
@@ -1358,6 +1360,10 @@ function startDM(otherUid) {
   $('fabBtn').style.display = 'none';
   renderChannelList();
   loadMessages();
+}
+
+function startDM(otherUid) {
+  openChannel(dmChannelId(currentUser.uid, otherUid));
 }
 
 function initDMs() {
@@ -1398,6 +1404,9 @@ async function sendMessage() {
   await addDoc(collection(db, 'channels', activeChannelId, 'messages'), {
     text, senderId: currentUser.uid, senderName: myDoc.name, createdAt: serverTimestamp()
   });
+  if (activeChannelId.startsWith('dm_')) {
+    try { await notifyDmMessage(activeChannelId, text); } catch (err) { console.warn('Could not notify DM recipient', err); }
+  }
 }
 async function ensureChannelDoc(id) {
   const ref = doc(db, 'channels', id);
@@ -1974,6 +1983,23 @@ async function clearReactionNotif(postId) {
   try { await deleteDoc(doc(db, 'notifications', notifDocId(postId, currentUser.uid))); } catch (err) { /* never existed — fine */ }
 }
 
+// A DM you receive is otherwise completely silent — no bell, no push — since the notification
+// system above was built for Wall reactions/comments and never extended to chat messages. Only
+// DMs notify for now (not Whole Family/household/branch channels, which could get genuinely
+// noisy with every message); see CLAUDE.md for the reasoning if group-channel notifications are
+// ever wanted too.
+async function notifyDmMessage(channelId, text) {
+  const chSnap = await getDoc(doc(db, 'channels', channelId));
+  const participantIds = (chSnap.exists() ? chSnap.data().participantIds : []) || [];
+  const forUserId = participantIds.find(uid => uid !== currentUser.uid);
+  if (!forUserId) return;
+  await addDoc(collection(db, 'notifications'), {
+    forUserId, fromUserId: currentUser.uid, fromUserName: myDoc.name,
+    type: 'message', channelId, textPreview: (text || '').slice(0, 80),
+    createdAt: serverTimestamp(), read: false
+  });
+}
+
 // Notifies the post's author, plus anyone else who's already commented on it (thread
 // activity) — excluding the commenter themself and anyone notified twice.
 async function notifyComment(postId, postAuthorId, commentText) {
@@ -1999,6 +2025,8 @@ function notifRowHtml(id, n) {
   const when = n.createdAt && n.createdAt.toDate ? n.createdAt.toDate().toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '';
   const desc = n.type === 'reaction'
     ? `${(reactionMeta(n.reactionType) || { emoji: '👍' }).emoji} reacted to your post`
+    : n.type === 'message'
+    ? `💬 sent you a message: "${escapeHtml(n.textPreview || '')}"`
     : `💬 commented: "${escapeHtml(n.textPreview || '')}"`;
   return `<div class="notifRow${n.read ? '' : ' unread'}" data-id="${id}">
     <span class="profileLink" data-uid="${n.fromUserId}">${avatarHtml(n.fromUserName, photo, 32)}</span>
@@ -2013,8 +2041,15 @@ function renderNotifications(snap) {
   $('notifBadge').textContent = unread > 9 ? '9+' : String(unread);
   $('notifEmpty').style.display = docs.length ? 'none' : 'block';
   $('notifList').innerHTML = docs.map(d => notifRowHtml(d.id, d.data())).join('');
-  $('notifList').querySelectorAll('.notifRow').forEach(row => {
-    row.onclick = () => { if (row.classList.contains('unread')) updateDoc(doc(db, 'notifications', row.dataset.id), { read: true }); };
+  $('notifList').querySelectorAll('.notifRow').forEach((row, i) => {
+    const n = docs[i].data();
+    row.onclick = () => {
+      if (row.classList.contains('unread')) updateDoc(doc(db, 'notifications', row.dataset.id), { read: true });
+      if (n.type === 'message' && n.channelId) {
+        openChannel(n.channelId);
+        $('notifModalBg').classList.remove('open');
+      }
+    };
   });
 }
 
