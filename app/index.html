@@ -193,8 +193,13 @@
   .notifRow { display: flex; gap: 10px; align-items: flex-start; padding: 10px 4px; border-bottom: 1px solid var(--border); cursor: pointer; }
   .notifRow:last-child { border-bottom: none; }
   .notifRow.unread { background: var(--accent-soft); border-radius: var(--radius); }
-  .notifRow .notifBody { font-size: 13px; }
+  .notifRow .notifBody { font-size: 13px; flex: 1; min-width: 0; }
   .notifRow .when { font-size: 11px; color: var(--ink-soft); margin-top: 2px; }
+  .notifDismissBtn {
+    flex-shrink: 0; background: none; border: none; color: var(--ink-soft); font-size: 15px;
+    line-height: 1; cursor: pointer; padding: 4px 6px; border-radius: 6px;
+  }
+  .notifDismissBtn:hover { background: var(--border); color: var(--ink); }
   .wallCommentSection { display: none; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border); }
   .wallCommentRow { display: flex; align-items: center; gap: 6px; font-size: 13px; padding: 4px 0; }
   .wallCommentRow .who { font-weight: 700; flex-shrink: 0; }
@@ -596,7 +601,10 @@
       <!-- Notifications -->
       <div class="modalBg" id="notifModalBg">
         <div class="modalSheet">
-          <h3 style="margin-top:0">🔔 Notifications</h3>
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:10px">
+            <h3 style="margin:0">🔔 Notifications</h3>
+            <button class="btn small secondary" id="notifClearAllBtn" style="width:auto; display:none">Clear all</button>
+          </div>
           <div id="pushRow" style="margin-bottom:10px"></div>
           <div id="notifList"></div>
           <div class="empty" id="notifEmpty" style="display:none">No notifications yet — reactions and comments on your posts show up here.</div>
@@ -2070,15 +2078,20 @@ function notifRowHtml(id, n) {
   return `<div class="notifRow${n.read ? '' : ' unread'}" data-id="${id}">
     <span class="profileLink" data-uid="${n.fromUserId}">${avatarHtml(n.fromUserName, photo, 32)}</span>
     <div class="notifBody"><b>${escapeHtml(n.fromUserName || '')}</b> ${desc}<div class="when">${when}</div></div>
+    <button class="notifDismissBtn" data-id="${id}" title="Clear this notification" aria-label="Clear this notification">✕</button>
   </div>`;
 }
 
+let _notifDocIds = [];
+
 function renderNotifications(snap) {
   const docs = snap.docs.slice().sort((a, b) => (b.data().createdAt ? b.data().createdAt.toMillis() : 0) - (a.data().createdAt ? a.data().createdAt.toMillis() : 0));
+  _notifDocIds = docs.map(d => d.id);
   const unread = docs.filter(d => !d.data().read).length;
   $('notifBadge').style.display = unread ? 'flex' : 'none';
   $('notifBadge').textContent = unread > 9 ? '9+' : String(unread);
   $('notifEmpty').style.display = docs.length ? 'none' : 'block';
+  $('notifClearAllBtn').style.display = docs.length ? 'block' : 'none';
   $('notifList').innerHTML = docs.map(d => notifRowHtml(d.id, d.data())).join('');
   $('notifList').querySelectorAll('.notifRow').forEach((row, i) => {
     const n = docs[i].data();
@@ -2090,6 +2103,12 @@ function renderNotifications(snap) {
       }
     };
   });
+  $('notifList').querySelectorAll('.notifDismissBtn').forEach(btn => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      deleteDoc(doc(db, 'notifications', btn.dataset.id));
+    };
+  });
 }
 
 function initNotifications() {
@@ -2099,6 +2118,12 @@ function initNotifications() {
 
 $('notifBtn').onclick = () => { renderPushRow(); $('notifModalBg').classList.add('open'); };
 $('notifCloseBtn').onclick = () => $('notifModalBg').classList.remove('open');
+$('notifClearAllBtn').onclick = async () => {
+  if (!_notifDocIds.length || !confirm(`Clear all ${_notifDocIds.length} notification(s)?`)) return;
+  const batch = writeBatch(db);
+  _notifDocIds.forEach(id => batch.delete(doc(db, 'notifications', id)));
+  await batch.commit();
+};
 
 // ---------- Push notifications (real browser/OS notifications when the app isn't open) ----------
 // Plain Web Push, not Firebase Cloud Messaging — a subscription is just {endpoint, keys:{p256dh,
