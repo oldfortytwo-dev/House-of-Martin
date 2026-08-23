@@ -483,6 +483,46 @@ touched once during initial setup (bulk-import tools).
   invite-code creation and the nested household editor both still worked correctly inside their
   accordions; no new console errors.
 
+## Accessibility: broken checklist checkboxes + "Large text & photos" (2026-08-22)
+
+Ryan reported the multi-household checklist felt "clunky and not selectable," and separately
+asked for larger text and profile pictures "for us old folks." The checklist complaint turned
+out to be a real **CSS bug**, not a preference — found by inspecting the actual computed styles,
+not guessed at:
+
+- **Root cause**: the generic rule `.field input, .field select { width:100%; ...
+  appearance:none; }` was written for text/select inputs, but every `.chkGroup` checklist
+  (household picker, branch picker, admin member picker) happens to sit inside a `.field` div
+  too, so its checkboxes inherited `width:100%` (stretched to fill the row) and
+  `appearance:none` (which strips the native checkbox's visible box entirely) — they were
+  rendering essentially invisible and stretched, not just small. Fixed by excluding checkboxes
+  from that rule (`:not([type=checkbox])`).
+- **On top of the fix**, `.chk`/`.chkGroup` were also resized for real touch-friendliness: 22×22px
+  checkboxes (was inheriting whatever the broken rule left, effectively unusable) with
+  `accent-color: var(--accent)` to recolor the *native* checkbox rather than replacing it with a
+  fully custom-built toggle (keeps built-in keyboard/screen-reader accessibility for free), plus
+  a `:has(input:checked)` rule that highlights the *entire row* when checked — far easier to see
+  at a glance than a small checkmark alone, and a harmless no-op on the rare browser without
+  `:has()` support.
+- **"Large text and profile pictures" solved as one combined personal preference**, not two
+  separate features: a "🔠 Large text & photos" checkbox in the Theme picker modal
+  (`#largeTextToggle`, next to the existing personal theme override — same `localStorage`
+  pattern, key `hom_largeText`) that toggles a `body.large-text` class using CSS `zoom: 1.22`.
+  This was a deliberate architectural call: nearly every font/spacing/image size in this
+  stylesheet is a fixed px value, not rem, so a `body { font-size }` bump wouldn't cascade to any
+  of it — rewriting the whole stylesheet to relative units to support one toggle wasn't worth it.
+  `zoom` scales the *entire rendered page* — text, buttons, checkboxes, and avatars — as one
+  unit, which incidentally means it satisfies "bigger profile pictures" for free without hunting
+  down and resizing every individual `avatarHtml()` call site across the app. Not supported in
+  Firefox (harmlessly stays default size there — this app's real-world usage is iOS Safari +
+  Chrome, both of which support `zoom`).
+- Verified against the emulator: a checkbox's computed style went from the broken state to a
+  real 22×22px native checkbox with `appearance:auto` and the correct accent color, and its row
+  visibly highlights when checked; the large-text toggle applies `zoom:1.22` immediately, persists
+  across a full reload (confirmed applying even pre-login, matching the existing theme-override
+  behavior), correctly reflects its saved state when the Theme modal is reopened, and toggles
+  back off cleanly.
+
 ## Households & Branches — how it actually works
 
 Came up because the model wasn't obvious from using the app — worth re-reading before touching
