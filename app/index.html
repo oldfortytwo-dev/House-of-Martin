@@ -4068,6 +4068,11 @@ $('themeCloseBtn').onclick = () => $('themeModalBg').classList.remove('open');
 $('largeTextToggle').onchange = (e) => {
   document.body.classList.toggle('large-text', e.target.checked);
   localStorage.setItem('hom_largeText', e.target.checked ? '1' : '0');
+  // avatarHtml() reads the large-text state at render time, so already-on-screen avatars need
+  // an explicit re-render to pick up the new size immediately — same re-render-on-preference-
+  // change pattern already used for theme switches, rather than a full data reload.
+  renderContacts();
+  rerenderWallFeed();
 };
 
 function renderThemeGrid() {
@@ -4205,8 +4210,16 @@ function initialsFor(name) {
 // Reused everywhere a person needs a small round avatar: Contacts rows, Wall posts/comments,
 // messages. Falls back to a colored initials circle (deterministic color per name) when no
 // photo has been uploaded — never a broken-image icon or blank space.
+//
+// "Large text & photos" mode gives avatars an EXTRA boost on top of the general page zoom
+// (#largeTextToggle) — the zoom alone was correct (measured: exactly 1.22x) but too subtle to
+// notice on something that starts this small (26px -> 32px is a ~6px difference). Since photos
+// specifically were the ask, this reads the live large-text state at render time and requests a
+// bigger base size outright, which then ALSO gets the page zoom on top — a deliberate
+// disproportionate boost, not a bug.
 function avatarHtml(name, photoUrl, size) {
-  const px = size || 32;
+  let px = size || 32;
+  if (document.body.classList.contains('large-text')) px = Math.round(px * 1.5);
   if (photoUrl) {
     return `<img src="${photoUrl}" alt="" style="width:${px}px; height:${px}px; border-radius:50%; object-fit:cover; flex-shrink:0; vertical-align:middle">`;
   }

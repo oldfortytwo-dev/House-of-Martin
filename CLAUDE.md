@@ -512,16 +512,28 @@ not guessed at:
   stylesheet is a fixed px value, not rem, so a `body { font-size }` bump wouldn't cascade to any
   of it — rewriting the whole stylesheet to relative units to support one toggle wasn't worth it.
   `zoom` scales the *entire rendered page* — text, buttons, checkboxes, and avatars — as one
-  unit, which incidentally means it satisfies "bigger profile pictures" for free without hunting
-  down and resizing every individual `avatarHtml()` call site across the app. Not supported in
-  Firefox (harmlessly stays default size there — this app's real-world usage is iOS Safari +
-  Chrome, both of which support `zoom`).
+  unit. Not supported in Firefox (harmlessly stays default size there — this app's real-world
+  usage is iOS Safari + Chrome, both of which support `zoom`).
+- **Follow-up same day**: Ryan tried it and reported "didn't notice much of a difference with
+  profile pictures." Measured directly rather than guessed — the zoom math was exactly right
+  (a 26px avatar measured 31.7px rendered, precisely ×1.22), but a ~6px absolute change on
+  something that starts this small just isn't a noticeable jump, especially for the audience this
+  was built for. Since photos specifically were the ask, `avatarHtml(name, photoUrl, size)` now
+  reads `document.body.classList.contains('large-text')` at render time and requests **1.5× the
+  base size outright** when active — which then *also* gets the page zoom on top of that
+  (1.5 × 1.22 ≈ 1.83× total), a deliberate disproportionate boost for avatars specifically, not
+  just "everything a little bigger." Since `avatarHtml()`'s output is baked into already-rendered
+  HTML, toggling large-text now also calls `renderContacts()`/`rerenderWallFeed()` immediately
+  (same re-render-on-preference-change pattern already used for theme switches) so on-screen
+  avatars update right away instead of waiting for their next natural re-render.
 - Verified against the emulator: a checkbox's computed style went from the broken state to a
   real 22×22px native checkbox with `appearance:auto` and the correct accent color, and its row
   visibly highlights when checked; the large-text toggle applies `zoom:1.22` immediately, persists
   across a full reload (confirmed applying even pre-login, matching the existing theme-override
-  behavior), correctly reflects its saved state when the Theme modal is reopened, and toggles
-  back off cleanly.
+  behavior), correctly reflects its saved state when the Theme modal is reopened, and toggles back
+  off cleanly; a Contacts avatar measured 32px with large-text off and **58.5px with it on** (the
+  full compounded 1.5×1.22 boost), confirmed via direct before/after `getBoundingClientRect()`
+  measurement, not just eyeballing.
 
 ## Households & Branches — how it actually works
 
