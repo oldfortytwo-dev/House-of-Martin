@@ -93,21 +93,29 @@ suspecting the boolean logic.
   colored initials circle everywhere via `avatarHtml()` when not set — selecting a photo in the
   Edit Info modal opens a crop/zoom tool first, see "Photo crop tool" below, rather than uploading
   the raw file), role (member/friend/admin), status (pending/approved/deactivated — see "Account
-  deactivation" below), householdId, inviteCodeUsed, deactivatedAt (null unless status is
+  deactivation" below), householdIds[] (array, not a single value — see "Multi-household
+  membership" below; `userHouseholdIds(u)` is tolerant of old docs that still only have the
+  pre-migration singular `householdId`), inviteCodeUsed, deactivatedAt (null unless status is
   'deactivated'), pushSubscriptions[] ({endpoint, keys:{p256dh,auth}} — one per device/browser
   with push notifications enabled, see "Push notifications" below)
 - **Household** (`households/{id}`): name, memberIds[], responderId (RSVPs/edits for the household),
-  phone, address, anniversary, extraContacts[] ({id, name, birthdate, phone, email} — family members
-  with no account of their own, e.g. young kids or relatives who'll never sign up)
+  phone, address, anniversary, contactIds[] (reverse index into the `contacts` collection below —
+  no-account family members belonging to this household; renamed from the old embedded
+  `extraContacts[]` array on 2026-08-23, see "Multi-household contacts")
+- **Contact** (`contacts/{id}`): name, birthdate, phone, email, deceased, householdIds[] (a contact
+  can belong to more than one household, same shape as User's `householdIds` — see "Multi-household
+  contacts" below), createdBy, createdAt. Promoted 2026-08-23 from `households/{id}.extraContacts`
+  to its own top-level collection for exactly the reason `householdId`→`householdIds` did on User:
+  an embedded/single-parent field can't represent "belongs to two households at once."
 - **Occasion** (`occasions/{id}`): type ('birthday'|'anniversary'|'memorial'), name, month, day,
   yearRaw (2-digit string, stored as-is — never auto-expanded to a 4-digit year on import, since real
   data confirmed the same 2 digits can mean 1917 for one person's birth year and 2017 for another's
   death year; no fixed cutoff rule is reliable), deceased/deathMonth/deathDay/deathYearRaw (birthday-range entries).
   Admin bulk-imports these from a printed family calendar (Admin → Family Calendar). Optionally
-  linkedUserId, or linkedHouseholdId+linkedContactId — set by Admin → "Link Calendar Birthdays to
-  Contacts", which matches occasions to a User or household extraContacts entry by exact name and,
-  after admin review of the guessed year, writes a real `birthdate` onto that contact and stores the
-  link back on the occasion so re-matching doesn't duplicate it.
+  linkedUserId, or linkedContactId — set by Admin → "Link Calendar Birthdays to Contacts", which
+  matches occasions to a User or `contacts` entry by exact name and, after admin review of the
+  guessed year, writes a real `birthdate` onto that contact and stores the link back on the occasion
+  so re-matching doesn't duplicate it.
 - **Branch** (`branches/{id}`): name, householdIds[]
 - **InviteCode** (`inviteCodes/{code}`): role (what new signups using this code become)
 - **Channel** (`channels/{id}`): name, type (family/household/branch/dm), householdId or branchId,
@@ -344,9 +352,11 @@ time; retrying after enabling it works immediately, no propagation delay observe
 opposed to scheduled/callable — function in this project; its first deploy failed with an Eventarc
 permission-propagation error and succeeded on retry ~90s later, same class of "first time" delay as
 other Google Cloud API enablement in this project) — if a new signup's email matches an email
-already on file in any household's `extraContacts`, they're auto-approved and linked into that
-household immediately, and the now-redundant `extraContacts` entry is removed. No match leaves them
-`pending` for the normal manual review. Documented security tradeoff in the function's own comment:
+already on file in the `contacts` collection, they're auto-approved and linked into **every**
+household that contact belonged to (rewritten 2026-08-23 for multi-household contacts — a contact
+can now be in more than one household, so a match auto-approves into all of them, not just one),
+and the now-redundant `contacts` doc is deleted. No match leaves them `pending` for the normal
+manual review. Documented security tradeoff in the function's own comment:
 Firebase Auth doesn't verify email ownership on signup, so this trades a bit of rigor for a lot of
 admin convenience — consistent with this app's existing posture elsewhere (e.g. storage.rules'
 albums/ comment), but worth knowing if the invite code ever circulates beyond trusted family.
@@ -541,8 +551,9 @@ Came up because the model wasn't obvious from using the app — worth re-reading
 this area again, and worth re-explaining to the user if it comes up.
 
 - A **household** is a family unit sharing an address (e.g. "The Alvarez-Martins"). It has
-  members (real accounts), an optional list of no-account family members (`extraContacts`, e.g.
-  young kids), a responder, and shared contact info.
+  members (real accounts), an optional list of no-account family members (`contactIds`, e.g.
+  young kids — see "Multi-household contacts" below for why this used to be called
+  `extraContacts`), a responder, and shared contact info.
 - A **branch** is a group of *households* (e.g. "Descendants of Grandpa Joe"), not a group of
   people. You don't join a branch directly — your household does, and you're in it by extension.
   This is the part that's confusing on first read: there's no "add yourself to a branch" concept
@@ -550,19 +561,29 @@ this area again, and worth re-explaining to the user if it comes up.
 - **A person can belong to more than one household at once** (added 2026-08-22, in response to a
   real scenario: a divided family where a kid genuinely has two homes). `users/{uid}.householdIds`
   is an array, not a single value — see the "Multi-household membership" section right below for
-  the full mechanics. `extraContacts` (no-account family members) are still single-household —
-  they live inside one specific household's own document, not as an independent entity, so
-  "belongs to two households at once" doesn't apply the same way to them.
+  the full mechanics. **No-account family members (`contacts/{id}`) got the same ability the very
+  next day** (2026-08-23) — see "Multi-household contacts" further below.
 - **Only a household's responder can pick which branch(es) it belongs to** — from Contacts →
   "Edit My Household" → the branch checklist. This is deliberately at the household level, not
   the person level, matching the model above.
 - **Regular members can't create/manage branches themselves** — only assign their own household
   to existing ones. Creating a new branch is still Admin → Branches (an admin-only concept, since
   a branch groups multiple households together and needs someone with a bird's-eye view).
-- Branch membership is a genuine self-toggle permission in `firestore.rules`, not just hidden UI —
-  see the rules file for the exact mechanism (Set-difference check ensuring a household's
-  responder can only add/remove *their own household's* membership in a branch, never anyone
-  else's).
+- **Branch self-toggle membership goes through a Cloud Function** (`updateBranchMembership`,
+  `functions/index.js`), not a client-side rules path. Two things were tried and failed here before
+  landing on this: first, a rule keyed off the pre-multi-household singular `me().householdId`
+  field, silently broken for anyone who only ever had `householdIds` populated. The attempted
+  replacement (2026-08-23) tried to derive "the one household id that changed" from a Set-difference
+  of the old/new `householdIds` array, then look that id up with `get()` — this is fundamentally
+  impossible in Firestore's rules language: `Set` has no `.toList()` or indexing method, so a value
+  that's been put into a Set can never be pulled back out as a scalar to plug into a `get()` path,
+  and there's no loop construct to check "for every changed id" as an alternative. Discovered via a
+  real permission-denied error against the emulator (`Name: [toList]. for 'update' @ L80`), not by
+  reading the docs first — worth remembering next time a rule needs "the one thing that changed" out
+  of a diffed array. `branches/{branchId}` in `firestore.rules` is admin-only write now; the Cloud
+  Function does the same responder-or-admin check in ordinary JS and writes via the Admin SDK, which
+  bypasses rules entirely — same shape as `updateHouseholdMembership` for the analogous
+  third-party-doc-write problem below.
 
 ### Multi-household membership — the mechanics
 
@@ -624,13 +645,68 @@ this area again, and worth re-explaining to the user if it comes up.
   the re-render) — fixed by null-checking before writing to it, a pattern already used elsewhere
   in this file for the same reason.
 
+### Multi-household contacts — the mechanics (2026-08-23)
+
+The morning after multi-household landed for real accounts, the user asked why Admin →
+Households' member checklist only offered the 3 real-account family members as options — the
+answer was that no-account family members (Grandma Rose, etc.) had no equivalent capability at
+all, and the user confirmed they wanted full parity: everyone in the family checklist, real
+account or not, regardless of account status.
+
+- **`contacts/{contactId}` is now its own top-level Firestore collection**, promoted from the old
+  `households/{id}.extraContacts` embedded array — the exact same reason `users/{uid}.householdIds`
+  became an array instead of a single `householdId` field: an embedded/single-parent field can't
+  represent "belongs to more than one household at once." A contact now carries its own
+  `householdIds` array (forward index) and each household carries `contactIds` (reverse index),
+  mirroring the real-account pattern exactly. `familyContacts`/`contactsById` (client-side) mirror
+  `allApprovedUsers`/module state the same way.
+- **No Cloud Function needed for the contact side** (unlike `updateHouseholdMembership` for real
+  accounts) — a contact has no self-identity to protect (nobody signs in *as* a contact), so
+  `firestore.rules`' `contacts/{contactId}` block is deliberately wide open to any approved member
+  for create/update/delete, same low-security/high-convenience posture already used for `albums/`.
+  Adding/removing a contact from a household is a plain two-sided `writeBatch` from the client.
+- **The self-service "add someone" dropdown (Contacts → Edit My Household) now branches on type**:
+  `value="user:{id}"` goes through `updateHouseholdMembership` (still needs the Cloud Function,
+  since writing someone else's `users/{uid}` doc still requires being that user or an admin);
+  `value="contact:{id}"` is a plain client batch write (no third-party-owned doc involved).
+- **Every read site that used to read `household.extraContacts` now reads the `contacts`
+  collection** filtered/fanned-out by `householdIds`, matching the real-account fan-out pattern:
+  Contacts tab, Family Tree, the contact detail modal (now shows every household a contact belongs
+  to, not just one), Admin → Households' unified member checklist (real accounts and contacts
+  together, in one list — the user's original ask), and the self-service household editor.
+- **Two flows that write `contacts` outside the household editors were also converted**: the
+  address-book bulk import (Admin → Households) generates the new household's Firestore doc ID
+  client-side up front, specifically so newly-created contacts in the same paste can reference a
+  household that hasn't been written yet — same one-shot create-or-update shape as before, just
+  targeting the new collection. The calendar-birthday-linking tool (matching `occasions` entries
+  to people by name) matches/writes against `contacts` the same way; a matched no-account birthday
+  now sets `linkedContactId` instead of the old `linkedHouseholdId` (dropped — a contact's identity
+  no longer implies a single household).
+- **A real pre-existing rules bug was found and fixed while building this**: `branches/{branchId}`'s
+  self-toggle rule was still keyed off `me().householdId`, the pre-multi-household singular field —
+  see the "Branch self-toggle membership" bullet above for the full story of what replaced it.
+- Verified against the emulator end-to-end, including a from-scratch non-admin responder (seeded
+  with only `householdIds`, matching the population profile of anyone who joined after the
+  multi-household migration) successfully joining and leaving a branch via `updateBranchMembership`
+  — the specific case the old rule silently could never have supported — and a live address-book
+  import creating both a new household and a linked no-account contact in one paste.
+- **Production migration required, not yet run as of this writing**: existing real family data
+  (e.g. "Amanda Knaub," "Bill Martin," entered via an earlier address-book import) still lives in
+  the old `households/{id}.extraContacts` array in production Firestore. Deploying this code without
+  first running that migration would make those real no-account family members silently disappear
+  from Contacts/Family Tree/the household editors (the new code only reads `contacts`, no dual-read
+  fallback was built for this one, unlike `userHouseholdIds()`'s tolerant read for the singular→array
+  migration). `firestore:rules` and `functions` are safe to deploy independently at any time; hold
+  `hosting` until the migration has run, or run both in the same sitting.
+
 ## Family Tree
 
 Contacts tab → "🌳 View Family Tree" (`#openTreeBtn`/`#treeModalBg`). A pure client-side
 render of already-live-synced data (`branches`/`households`/`householdsById`/`usersById`/
-`allApprovedUsers`) — no new Firestore reads, writes, or rules. Three sections, in order:
-branches with their households (and each household's members + `extraContacts`, tagged "no
-account") nested inside via a classic nested-`<ul>`/connector-line CSS treatment
+`allApprovedUsers`/`familyContacts`) — no new Firestore reads, writes, or rules. Three sections,
+in order: branches with their households (and each household's members + no-account contacts
+filtered from `familyContacts` by `householdIds`, tagged "no account") nested inside via a
+classic nested-`<ul>`/connector-line CSS treatment
 (`renderFamilyTree()`/`householdNodeHtml()`/`personNodeHtml()`/`extraContactNodeHtml()`); any
 household not in a branch, under "— Not in any group —"; any approved member with no
 household, under "— No household —".

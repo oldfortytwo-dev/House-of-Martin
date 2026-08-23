@@ -180,11 +180,12 @@ exports.sendDigestNow = onCall({ secrets: [GMAIL_USER, GMAIL_APP_PASSWORD] }, as
   }
 });
 
-// Auto-approve a new signup if their email matches a household's extraContacts entry (i.e. someone
-// already known from the imported address book / manually added by an admin). A pending user can't
-// read the households collection themselves (firestore.rules requires isApprovedMember()), so this
-// has to run server-side via the Admin SDK, which bypasses rules entirely — that's also what keeps
-// it safe: the match logic isn't exposed to the client, only its outcome (approved or still pending).
+// Auto-approve a new signup if their email matches a no-account contact record (i.e. someone
+// already known from the imported address book / manually added by an admin). A pending user
+// can't read the contacts collection themselves (firestore.rules requires isApprovedMember()),
+// so this has to run server-side via the Admin SDK, which bypasses rules entirely — that's also
+// what keeps it safe: the match logic isn't exposed to the client, only its outcome (approved or
+// still pending).
 //
 // Security note: this trades a small amount of rigor for a lot of admin convenience. Firebase Auth
 // doesn't verify email ownership on signup by default, so someone who already holds a valid invite
@@ -194,6 +195,12 @@ exports.sendDigestNow = onCall({ secrets: [GMAIL_USER, GMAIL_APP_PASSWORD] }, as
 // albums/ comment for the same tradeoff elsewhere), but worth knowing if the invite code ever leaks
 // beyond trusted family. The mitigation, if wanted later, is requiring Firebase email verification
 // before auto-approval — not implemented here since it wasn't asked for.
+//
+// Updated 2026-08-23 for the contacts collection (see "Multi-household membership for no-account
+// contacts" in CLAUDE.md): a matched contact can now belong to more than one household, so the
+// newly-approved user is added to ALL of them, not just one — the whole reason this promotion
+// happened was that a real account could only ever ride into a single household through this
+// same path before.
 exports.autoApproveKnownEmail = onDocumentCreated('users/{uid}', async (event) => {
   const snap = event.data;
   if (!snap) return;
@@ -201,32 +208,34 @@ exports.autoApproveKnownEmail = onDocumentCreated('users/{uid}', async (event) =
   if (!user.email || user.status !== 'pending') return;
   const emailLower = user.email.toLowerCase();
 
-  const householdsSnap = await db.collection('households').get();
-  for (const hhDoc of householdsSnap.docs) {
-    const hh = hhDoc.data();
-    const extraContacts = hh.extraContacts || [];
-    const matchIdx = extraContacts.findIndex(ec => (ec.email || '').toLowerCase() === emailLower);
-    if (matchIdx === -1) continue;
+  const contactsSnap = await db.collection('contacts').get();
+  const matchedDoc = contactsSnap.docs.find(d => (d.data().email || '').toLowerCase() === emailLower);
+  if (!matchedDoc) return; // No match — stays pending for the normal manual approval in Admin tab.
 
-    const matched = extraContacts[matchIdx];
-    const remainingContacts = extraContacts.filter((_, i) => i !== matchIdx);
+  const matched = matchedDoc.data();
+  const householdIds = matched.householdIds || [];
+  const batch = db.batch();
+  batch.update(snap.ref, {
+    status: 'approved',
+    householdIds,
+    phone: user.phone || matched.phone || '',
+    birthdate: user.birthdate || matched.birthdate || null
+  });
+  for (const hhId of householdIds) {
+    const hhRef = db.collection('households').doc(hhId);
+    const hhSnap = await hhRef.get();
+    if (!hhSnap.exists) continue;
+    const hh = hhSnap.data();
     const memberIds = hh.memberIds || [];
-    const batch = db.batch();
-    batch.update(snap.ref, {
-      status: 'approved',
-      householdIds: [hhDoc.id],
-      phone: user.phone || matched.phone || '',
-      birthdate: user.birthdate || matched.birthdate || null
-    });
-    batch.update(hhDoc.ref, {
+    const contactIds = hh.contactIds || [];
+    batch.update(hhRef, {
       memberIds: memberIds.includes(event.params.uid) ? memberIds : [...memberIds, event.params.uid],
-      extraContacts: remainingContacts
+      contactIds: contactIds.filter(id => id !== matchedDoc.id)
     });
-    await batch.commit();
-    console.log(`Auto-approved ${user.email} (uid ${event.params.uid}) into household ${hhDoc.id}, matched extraContacts entry "${matched.name}"`);
-    return;
   }
-  // No match — stays pending for the normal manual approval in Admin tab.
+  batch.delete(matchedDoc.ref);
+  await batch.commit();
+  console.log(`Auto-approved ${user.email} (uid ${event.params.uid}) into ${householdIds.length} household(s), matched contact "${matched.name}"`);
 });
 
 // Fires whenever the client writes a notifications/{id} doc (see notifyReaction()/
@@ -316,5 +325,46 @@ exports.updateHouseholdMembership = onCall(async (request) => {
     batch.update(targetRef, { householdIds: targetHouseholdIds.filter(id => id !== householdId) });
   }
   await batch.commit();
+  return { ok: true };
+});
+
+// Lets a household's responder (not just an admin) join or leave their household in/out of a
+// branch (a family sub-group, e.g. "Grandkids" or "East Coast") — needed server-side because
+// Firestore rules has no way to express "the one household id that changed belongs to a
+// household I respond for": Set values in the rules language can't be converted back to a List
+// or indexed, so a diff-derived id can never be plugged into a get() lookup, and there's no loop
+// construct to check it any other way. See firestore.rules' branches/{branchId} comment for the
+// rules-side history. Direct writes to a branch doc stay admin-only; this is the only path a
+// non-admin responder has to toggle their household's branch membership.
+exports.updateBranchMembership = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required.');
+  const { branchId, householdId, action } = request.data || {};
+  if (!branchId || !householdId || !['join', 'leave'].includes(action)) {
+    throw new HttpsError('invalid-argument', 'branchId, householdId, and action ("join" or "leave") are required.');
+  }
+
+  const callerSnap = await db.collection('users').doc(request.auth.uid).get();
+  const caller = callerSnap.data();
+  if (!caller || caller.status !== 'approved') throw new HttpsError('permission-denied', 'Not an approved member.');
+
+  const hhSnap = await db.collection('households').doc(householdId).get();
+  if (!hhSnap.exists) throw new HttpsError('not-found', 'Household not found.');
+  const hh = hhSnap.data();
+  const isAdmin = caller.role === 'admin';
+  const isResponder = hh.responderId === request.auth.uid;
+  if (!isAdmin && !isResponder) {
+    throw new HttpsError('permission-denied', "Only this household's responder or an admin can change its branch membership.");
+  }
+
+  const branchRef = db.collection('branches').doc(branchId);
+  const branchSnap = await branchRef.get();
+  if (!branchSnap.exists) throw new HttpsError('not-found', 'Branch not found.');
+  const householdIds = branchSnap.data().householdIds || [];
+
+  if (action === 'join') {
+    if (!householdIds.includes(householdId)) await branchRef.update({ householdIds: [...householdIds, householdId] });
+  } else {
+    await branchRef.update({ householdIds: householdIds.filter(id => id !== householdId) });
+  }
   return { ok: true };
 });

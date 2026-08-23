@@ -1147,6 +1147,11 @@ let myDoc = null;         // Firestore users/{uid} doc data
 let myHouseholds = [];    // Firestore households/{id} docs this user belongs to (0, 1, or many), cached
 let activeChannelId = 'family';
 let households = [], householdsById = {};
+// No-account family members ("contacts") — promoted 2026-08-23 from a household-embedded
+// extraContacts array to their own top-level collection specifically so one contact can belong
+// to more than one household at once, the same ability real accounts have via householdIds. See
+// "Multi-household membership for no-account contacts" in CLAUDE.md.
+let familyContacts = [], contactsById = {};
 
 // A person can belong to any number of households (e.g. a kid with two homes after a divorce).
 // The source of truth is users/{uid}.householdIds (array) with households/{id}.memberIds as the
@@ -1167,7 +1172,8 @@ let digestSubmissions = [];
 let pendingCount = 0, eventsCount = 0, albumsCount = 0;
 let unsubMsgs = null, unsubEvents = null, unsubAlbums = null, unsubContacts = null, unsubPending = null,
     unsubInvites = null, unsubHouseholds = null, unsubBranches = null, unsubPhotos = null, unsubOccasions = null,
-    unsubDMs = null, unsubDigest = null, unsubAppearance = null, unsubWall = null, unsubNotifs = null;
+    unsubDMs = null, unsubDigest = null, unsubAppearance = null, unsubWall = null, unsubNotifs = null,
+    unsubFamilyContacts = null;
 let _openAlbumId = null;
 let _wallPhotoFile = null;
 
@@ -1259,6 +1265,7 @@ onAuthStateChanged(auth, (user) => {
     if (_shellInitialized) return; // avoid re-subscribing everything on every unrelated profile-doc change
     _shellInitialized = true;
     initHouseholds();
+    initFamilyContacts();
     initBranches();
     initChannels();
     initEvents();
@@ -1279,8 +1286,8 @@ function show(id) {
 }
 
 function cleanupListeners() {
-  [unsubMsgs, unsubEvents, unsubAlbums, unsubContacts, unsubPending, unsubInvites, unsubHouseholds, unsubBranches, unsubPhotos, unsubOccasions, unsubDMs, unsubDigest, unsubAppearance, unsubWall, unsubNotifs].forEach(u => u && u());
-  unsubMsgs = unsubEvents = unsubAlbums = unsubContacts = unsubPending = unsubInvites = unsubHouseholds = unsubBranches = unsubPhotos = unsubOccasions = unsubDMs = unsubDigest = unsubAppearance = unsubWall = unsubNotifs = null;
+  [unsubMsgs, unsubEvents, unsubAlbums, unsubContacts, unsubPending, unsubInvites, unsubHouseholds, unsubBranches, unsubPhotos, unsubOccasions, unsubDMs, unsubDigest, unsubAppearance, unsubWall, unsubNotifs, unsubFamilyContacts].forEach(u => u && u());
+  unsubMsgs = unsubEvents = unsubAlbums = unsubContacts = unsubPending = unsubInvites = unsubHouseholds = unsubBranches = unsubPhotos = unsubOccasions = unsubDMs = unsubDigest = unsubAppearance = unsubWall = unsubNotifs = unsubFamilyContacts = null;
 }
 
 // ---------- Tab nav ----------
@@ -1736,24 +1743,32 @@ function initContacts() {
 // the "elementary"/busy feeling flagged in review, and the person's own profile is a more
 // natural home for "do something to this person" than the directory row is.
 function contactsGroupedData() {
-  // A person with more than one household (see userHouseholdIds()) shows up under EACH one —
-  // the fan-out is deliberate, not a bug: Contacts is "who's in this household", and someone
-  // genuinely is in more than one.
+  // A person (real account or no-account contact) with more than one household shows up under
+  // EACH one — the fan-out is deliberate, not a bug: Contacts is "who's in this household," and
+  // someone genuinely can be in more than one. Both real accounts (userHouseholdIds()) and
+  // no-account contacts (c.householdIds directly — always an array, no legacy field to worry
+  // about since `contacts` is a brand-new collection) go through the identical fan-out shape.
   const byHousehold = {};
+  const byHouseholdContacts = {};
   allApprovedUsers.forEach(u => {
     const ids = userHouseholdIds(u).filter(id => householdsById[id]);
     const keys = ids.length ? ids : ['none'];
     keys.forEach(key => { (byHousehold[key] = byHousehold[key] || []).push(u); });
   });
+  familyContacts.forEach(c => {
+    const ids = (c.householdIds || []).filter(id => householdsById[id]);
+    const keys = ids.length ? ids : ['none'];
+    keys.forEach(key => { (byHouseholdContacts[key] = byHouseholdContacts[key] || []).push(c); });
+  });
   const hhIdsWithContent = households
-    .filter(h => (byHousehold[h.id] && byHousehold[h.id].length) || (h.extraContacts && h.extraContacts.length))
+    .filter(h => (byHousehold[h.id] && byHousehold[h.id].length) || (byHouseholdContacts[h.id] && byHouseholdContacts[h.id].length))
     .map(h => h.id);
-  const orderedKeys = [...hhIdsWithContent, ...(byHousehold['none'] ? ['none'] : [])];
+  const orderedKeys = [...hhIdsWithContent, ...((byHousehold['none'] || byHouseholdContacts['none']) ? ['none'] : [])];
   return orderedKeys.map(key => ({
     key,
     hh: key !== 'none' ? householdsById[key] : null,
     members: byHousehold[key] || [],
-    extraContacts: (key !== 'none' && householdsById[key] && householdsById[key].extraContacts) || []
+    contacts: byHouseholdContacts[key] || []
   }));
 }
 
@@ -1778,14 +1793,14 @@ function personLinkHtml(person, isMember, hh, { size, baseClass } = {}) {
   const infoBits = isMember ? [] : [person.phone, person.email].filter(Boolean);
   const info = infoBits.length ? `<div class="info">${escapeHtml(infoBits.join(' · '))}</div>` : '';
   const linkClass = isMember ? 'profileLink' : 'contactDetailLink';
-  const dataAttrs = isMember ? `data-uid="${person.id}"` : `data-hh="${hh ? hh.id : ''}" data-ec="${person.id}"`;
+  const dataAttrs = isMember ? `data-uid="${person.id}"` : `data-ec="${person.id}"`;
   const attrs = `class="${baseClass} ${linkClass}" ${dataAttrs}`;
   return { attrs, avatar: avatarHtml(person.name, person.photoUrl || null, px), badges, info };
 }
 
 function renderContactsAccordion(groups) {
   return groups.map(g => {
-    const allPeople = [...g.members, ...g.extraContacts];
+    const allPeople = [...g.members, ...g.contacts];
     const stack = allPeople.slice(0, 3).map(p => avatarHtml(p.name, p.photoUrl || null, 26)).join('');
     const rows = allPeople.map((p, i) => {
       const { attrs, avatar, badges, info } = personLinkHtml(p, i < g.members.length, g.hh, { size: 32, baseClass: 'personLink' });
@@ -1804,7 +1819,7 @@ function renderContactsAccordion(groups) {
 
 function renderContactsCards(groups) {
   return groups.map(g => {
-    const allPeople = [...g.members, ...g.extraContacts];
+    const allPeople = [...g.members, ...g.contacts];
     const rows = allPeople.map((p, i) => {
       const { attrs, avatar, badges, info } = personLinkHtml(p, i < g.members.length, g.hh, { size: 32, baseClass: 'personLink' });
       return `<button ${attrs}>${avatar}<div><div class="nm">${escapeHtml(p.name)}${badges}</div>${info}</div></button>`;
@@ -1819,7 +1834,7 @@ function renderContactsCards(groups) {
 
 function renderContactsGrid(groups) {
   return groups.map(g => {
-    const allPeople = [...g.members, ...g.extraContacts];
+    const allPeople = [...g.members, ...g.contacts];
     const tiles = allPeople.map((p, i) => {
       const { attrs, avatar, badges } = personLinkHtml(p, i < g.members.length, g.hh, { size: 96, baseClass: 'gridTile' });
       return `<button ${attrs}><div class="avatarWrap">${avatar}</div><div class="nm">${escapeHtml(p.name)}</div><div class="badgeRow">${badges}</div></button>`;
@@ -1844,29 +1859,30 @@ function renderContacts(themeOverride) {
 }
 
 // ---------- Contact detail (no-account contacts — real accounts use openProfile() instead) ----------
-function openContactDetail(hhId, ecId) {
-  const hh = householdsById[hhId];
-  const ec = hh && (hh.extraContacts || []).find(e => e.id === ecId);
-  if (!hh || !ec) return;
-  const canEdit = hh.responderId === currentUser.uid || myDoc.role === 'admin';
+function openContactDetail(contactId) {
+  const ec = contactsById[contactId];
+  if (!ec) return;
+  const hhs = (ec.householdIds || []).map(id => householdsById[id]).filter(Boolean);
+  const canEdit = myDoc.role === 'admin' || hhs.some(hh => hh.responderId === currentUser.uid);
   const infoLines = [ec.phone ? `📞 ${escapeHtml(ec.phone)}` : '', ec.email ? `✉️ ${escapeHtml(ec.email)}` : ''].filter(Boolean);
+  const hhLines = hhs.length ? hhs.map(hh => `<div class="hh">🏠 ${escapeHtml(hh.name)}</div>`).join('') : '<div class="hh">No household set</div>';
   $('contactDetailBody').innerHTML = `
     <div style="display:flex; align-items:center; gap:14px">
       ${avatarHtml(ec.name, null, 64)}
       <div>
         <div style="font-size:1.15em; font-weight:700">${escapeHtml(ec.name)}${ec.deceased ? ' 🕊' : ''}${ageBadgeHtml(ec)}</div>
-        <div class="hh">🏠 ${escapeHtml(hh.name)}</div>
+        ${hhLines}
         <span class="noAccountBadge">no account</span>
       </div>
     </div>
     ${infoLines.length ? `<div style="margin-top:14px; line-height:1.8">${infoLines.join('<br>')}</div>` : ''}
-    ${canEdit ? `<p class="hh" style="margin-top:14px">To edit, mark deceased, or remove this contact, use ${hh.responderId === currentUser.uid ? '🏠 Edit My Household' : 'Admin → Households'}.</p>` : ''}
+    ${canEdit ? `<p class="hh" style="margin-top:14px">To edit, mark deceased, remove, or change which households this person belongs to, use 🏠 Edit My Household or Admin → Households.</p>` : ''}
   `;
   $('contactDetailModalBg').classList.add('open');
 }
 document.addEventListener('click', (e) => {
   const link = e.target.closest('.contactDetailLink');
-  if (link) openContactDetail(link.dataset.hh, link.dataset.ec);
+  if (link) openContactDetail(link.dataset.ec);
 });
 $('contactDetailCloseBtn').onclick = () => $('contactDetailModalBg').classList.remove('open');
 
@@ -1881,8 +1897,9 @@ function extraContactNodeHtml(ec) {
 }
 function householdNodeHtml(hh) {
   const memberItems = (hh.memberIds || []).map(uid => usersById[uid]).filter(Boolean).map(personNodeHtml).join('');
-  const extraItems = (hh.extraContacts || []).map(extraContactNodeHtml).join('');
-  const count = (hh.memberIds || []).length + (hh.extraContacts || []).length;
+  const hhContacts = familyContacts.filter(c => (c.householdIds || []).includes(hh.id));
+  const extraItems = hhContacts.map(extraContactNodeHtml).join('');
+  const count = (hh.memberIds || []).length + hhContacts.length;
   return `<li>
     <div class="treeNode household">🏠 ${escapeHtml(hh.name)} <span class="treeMeta">(${count} ${count === 1 ? 'person' : 'people'})</span></div>
     ${memberItems || extraItems ? `<ul class="treeList">${memberItems}${extraItems}</ul>` : ''}
@@ -2179,7 +2196,8 @@ function renderMyHousehold() {
     return `<option value="${uid}" ${hh.responderId === uid ? 'selected' : ''}>${escapeHtml(u ? u.name : uid)}</option>`;
   }).join('') || `<option value="${currentUser.uid}" selected>${escapeHtml(myDoc.name)}</option>`;
 
-  const extraRows = (hh.extraContacts || []).map(ec => {
+  const hhContacts = familyContacts.filter(c => (c.householdIds || []).includes(hh.id));
+  const extraRows = hhContacts.map(ec => {
     if (myHouseholdEcState[ec.id] === 'edit') {
       return `<div class="hhEditor" data-ecid="${ec.id}">
         <div class="field"><label>Name</label><input type="text" class="mhEditName" value="${escapeHtml(ec.name)}"></div>
@@ -2217,7 +2235,10 @@ function renderMyHousehold() {
     </div>`;
   }).join('') || '<div class="hh">None yet</div>';
   const addableMembers = allApprovedUsers.filter(u => !(hh.memberIds || []).includes(u.id));
-  const addMemberOptions = addableMembers.map(u => `<option value="${u.id}">${escapeHtml(u.name)}</option>`).join('');
+  const addableContacts = familyContacts.filter(c => !(c.householdIds || []).includes(hh.id));
+  const addMemberOptions = addableMembers.map(u => `<option value="user:${u.id}">${escapeHtml(u.name)}</option>`).join('')
+    + addableContacts.map(c => `<option value="contact:${c.id}">${escapeHtml(c.name)} (no account)</option>`).join('');
+  const anyAddable = addableMembers.length || addableContacts.length;
 
   body.innerHTML = `
     ${switcherHtml}
@@ -2232,13 +2253,13 @@ function renderMyHousehold() {
     <div class="ecSection">
       <div class="nm" style="font-size:13px">Members with an account</div>
       <div style="margin-top:6px">${memberRows}</div>
-      ${addableMembers.length ? `
-      <div class="field" style="margin-top:10px"><label>Add an existing family member (they can belong to more than one household)</label>
+      ${anyAddable ? `
+      <div class="field" style="margin-top:10px"><label>Add someone already in the family — with or without an account (they can belong to more than one household)</label>
         <select id="mhAddMemberSelect"><option value="">— Choose someone —</option>${addMemberOptions}</select>
       </div>
       <button class="btn small secondary" id="mhAddMemberBtn">Add to household</button>
       <div class="hh" id="mhAddMemberStatus" style="margin-top:4px"></div>
-      ` : '<div class="hh" style="margin-top:6px">Everyone approved is already a member here.</div>'}
+      ` : '<div class="hh" style="margin-top:6px">Everyone in the family is already a member here.</div>'}
     </div>
 
     <div class="ecSection">
@@ -2265,13 +2286,27 @@ function renderMyHousehold() {
   }
   if ($('mhAddMemberBtn')) {
     $('mhAddMemberBtn').onclick = async () => {
-      const uid = $('mhAddMemberSelect').value;
-      if (!uid) return;
+      const choice = $('mhAddMemberSelect').value;
+      if (!choice) return;
+      const [type, id] = choice.split(':');
       $('mhAddMemberStatus').textContent = 'Adding…';
       try {
-        await httpsCallable(functions, 'updateHouseholdMembership')({ householdId: hh.id, userId: uid, action: 'add' });
-        // The live households listener may have already re-rendered this whole modal by the
-        // time this resolves (the write succeeding is what triggers the re-render) — the
+        if (type === 'user') {
+          // Writes another person's own users/{uid}.householdIds, which only that person or an
+          // admin can do directly per firestore.rules — needs the Cloud Function to bypass that
+          // for a responder acting on someone else's account.
+          await httpsCallable(functions, 'updateHouseholdMembership')({ householdId: hh.id, userId: id, action: 'add' });
+        } else {
+          // No-account contacts have no self-ownership rule to work around — any approved
+          // member can write a contact doc directly, so this is just a plain batch write.
+          const c = contactsById[id];
+          const batch = writeBatch(db);
+          batch.update(doc(db, 'contacts', id), { householdIds: [...new Set([...(c.householdIds || []), hh.id])] });
+          batch.update(doc(db, 'households', hh.id), { contactIds: [...new Set([...(hh.contactIds || []), id])] });
+          await batch.commit();
+        }
+        // The live households/contacts listeners may have already re-rendered this whole modal
+        // by the time this resolves (the write succeeding is what triggers the re-render) — the
         // status element, or even this whole section, may no longer exist. Only touch it if
         // it's still there.
         if ($('mhAddMemberStatus')) $('mhAddMemberStatus').textContent = '';
@@ -2291,34 +2326,46 @@ function renderMyHousehold() {
     };
   });
   $('mhSaveBtn').onclick = async () => {
-    await updateDoc(doc(db, 'households', hh.id), {
-      name: $('mhName').value.trim() || hh.name,
-      phone: $('mhPhone').value.trim(),
-      address: $('mhAddress').value.trim(),
-      anniversary: $('mhAnniversary').value || null,
-      responderId: $('mhResponder').value || hh.responderId
-    });
-    // One write per branch whose checked state actually changed — the self-toggle rule
-    // only allows changing THIS household's own presence in a branch, one doc at a time.
-    const checkedBranchIds = new Set(Array.from(body.querySelectorAll('.mhBranchChk:checked')).map(c => c.value));
-    for (const b of branches) {
-      const wasIn = (b.householdIds || []).includes(hh.id);
-      const nowIn = checkedBranchIds.has(b.id);
-      if (wasIn === nowIn) continue;
-      const updated = nowIn ? [...(b.householdIds || []), hh.id] : (b.householdIds || []).filter(id => id !== hh.id);
-      await updateDoc(doc(db, 'branches', b.id), { householdIds: updated });
+    try {
+      await updateDoc(doc(db, 'households', hh.id), {
+        name: $('mhName').value.trim() || hh.name,
+        phone: $('mhPhone').value.trim(),
+        address: $('mhAddress').value.trim(),
+        anniversary: $('mhAnniversary').value || null,
+        responderId: $('mhResponder').value || hh.responderId
+      });
+      // One Cloud Function call per branch whose checked state actually changed — a household
+      // doc's own branch membership can't be written client-side (see firestore.rules'
+      // branches/{branchId} comment), so this goes through updateBranchMembership instead.
+      const checkedBranchIds = new Set(Array.from(body.querySelectorAll('.mhBranchChk:checked')).map(c => c.value));
+      for (const b of branches) {
+        const wasIn = (b.householdIds || []).includes(hh.id);
+        const nowIn = checkedBranchIds.has(b.id);
+        if (wasIn === nowIn) continue;
+        await httpsCallable(functions, 'updateBranchMembership')({ branchId: b.id, householdId: hh.id, action: nowIn ? 'join' : 'leave' });
+      }
+    } catch (err) {
+      alert('Could not save: ' + (err.message || err));
     }
   };
   body.querySelectorAll('.mhDelBtn').forEach(btn => {
     btn.onclick = async () => {
-      const updated = (hh.extraContacts || []).filter(ec => ec.id !== btn.dataset.id);
-      await updateDoc(doc(db, 'households', hh.id), { extraContacts: updated });
+      const ec = contactsById[btn.dataset.id];
+      if (!ec || !confirm(`Remove ${ec.name} entirely? This deletes them from every household they're in, not just this one.`)) return;
+      const batch = writeBatch(db);
+      (ec.householdIds || []).forEach(hhId => {
+        const targetHH = householdsById[hhId];
+        if (targetHH) batch.update(doc(db, 'households', hhId), { contactIds: (targetHH.contactIds || []).filter(id => id !== ec.id) });
+      });
+      batch.delete(doc(db, 'contacts', ec.id));
+      await batch.commit();
     };
   });
   body.querySelectorAll('.mhDeceasedBtn').forEach(btn => {
     btn.onclick = async () => {
-      const updated = (hh.extraContacts || []).map(ec => ec.id === btn.dataset.id ? { ...ec, deceased: !ec.deceased } : ec);
-      await updateDoc(doc(db, 'households', hh.id), { extraContacts: updated });
+      const ec = contactsById[btn.dataset.id];
+      if (!ec) return;
+      await updateDoc(doc(db, 'contacts', ec.id), { deceased: !ec.deceased });
     };
   });
   body.querySelectorAll('.mhEditBtn').forEach(btn => {
@@ -2330,37 +2377,44 @@ function renderMyHousehold() {
   body.querySelectorAll('.mhSaveEdit').forEach(btn => {
     btn.onclick = async () => {
       const form = body.querySelector(`[data-ecid="${btn.dataset.id}"]`);
-      const updated = (hh.extraContacts || []).map(ec => ec.id !== btn.dataset.id ? ec : {
-        ...ec,
-        name: form.querySelector('.mhEditName').value.trim() || ec.name,
+      await updateDoc(doc(db, 'contacts', btn.dataset.id), {
+        name: form.querySelector('.mhEditName').value.trim() || contactsById[btn.dataset.id].name,
         birthdate: form.querySelector('.mhEditBirthdate').value || null,
         phone: form.querySelector('.mhEditPhone').value.trim(),
         email: form.querySelector('.mhEditEmail').value.trim()
       });
-      await updateDoc(doc(db, 'households', hh.id), { extraContacts: updated });
       delete myHouseholdEcState[btn.dataset.id];
     };
   });
   $('mhEcAddOne').onclick = async () => {
     const name = $('mhEcName').value.trim();
     if (!name) return;
-    const entry = {
-      id: crypto.randomUUID(), name,
-      birthdate: $('mhEcBirthdate').value || null,
-      phone: $('mhEcPhone').value.trim(),
-      email: $('mhEcEmail').value.trim()
-    };
-    await updateDoc(doc(db, 'households', hh.id), { extraContacts: [...(hh.extraContacts || []), entry] });
+    const batch = writeBatch(db);
+    const ref = doc(collection(db, 'contacts'));
+    batch.set(ref, {
+      name, birthdate: $('mhEcBirthdate').value || null,
+      phone: $('mhEcPhone').value.trim(), email: $('mhEcEmail').value.trim(),
+      deceased: false, householdIds: [hh.id], createdBy: currentUser.uid, createdAt: serverTimestamp()
+    });
+    batch.update(doc(db, 'households', hh.id), { contactIds: [...(hh.contactIds || []), ref.id] });
+    await batch.commit();
     $('mhEcName').value = ''; $('mhEcBirthdate').value = ''; $('mhEcPhone').value = ''; $('mhEcEmail').value = '';
   };
   $('mhEcAddBulk').onclick = async () => {
     const lines = $('mhEcBulk').value.split('\n').map(l => l.trim()).filter(Boolean);
     const newEntries = lines.map(line => {
       const [name, birthdate, phone, email] = line.split(',').map(p => (p || '').trim());
-      return name ? { id: crypto.randomUUID(), name, birthdate: birthdate || null, phone: phone || '', email: email || '' } : null;
+      return name ? { name, birthdate: birthdate || null, phone: phone || '', email: email || '' } : null;
     }).filter(Boolean);
     if (!newEntries.length) return;
-    await updateDoc(doc(db, 'households', hh.id), { extraContacts: [...(hh.extraContacts || []), ...newEntries] });
+    const batch = writeBatch(db);
+    const newIds = newEntries.map(entry => {
+      const ref = doc(collection(db, 'contacts'));
+      batch.set(ref, { ...entry, deceased: false, householdIds: [hh.id], createdBy: currentUser.uid, createdAt: serverTimestamp() });
+      return ref.id;
+    });
+    batch.update(doc(db, 'households', hh.id), { contactIds: [...(hh.contactIds || []), ...newIds] });
+    await batch.commit();
     $('mhEcBulk').value = '';
   };
 }
@@ -2978,6 +3032,17 @@ function initHouseholds() {
   });
 }
 
+function initFamilyContacts() {
+  unsubFamilyContacts = onSnapshot(collection(db, 'contacts'), (snap) => {
+    familyContacts = []; contactsById = {};
+    snap.forEach(d => { const c = { id: d.id, ...d.data() }; familyContacts.push(c); contactsById[d.id] = c; });
+    familyContacts.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    renderContacts();
+    renderMyHousehold();
+    if (myDoc.role === 'admin') renderHouseholdsAdmin();
+  });
+}
+
 function initBranches() {
   unsubBranches = onSnapshot(collection(db, 'branches'), (snap) => {
     branches = []; branchesById = {};
@@ -2992,7 +3057,7 @@ function initBranches() {
 $('createHouseholdBtn').onclick = async () => {
   const name = $('newHouseholdName').value.trim();
   if (!name) return;
-  await addDoc(collection(db, 'households'), { name, memberIds: [], responderId: null, phone: '', address: '', anniversary: null, extraContacts: [], createdBy: currentUser.uid, createdAt: serverTimestamp() });
+  await addDoc(collection(db, 'households'), { name, memberIds: [], responderId: null, phone: '', address: '', anniversary: null, contactIds: [], createdBy: currentUser.uid, createdAt: serverTimestamp() });
   $('newHouseholdName').value = '';
 };
 
@@ -3004,7 +3069,7 @@ async function createHouseholdInline(nameHint) {
   if (!name || !name.trim()) return null;
   const ref = await addDoc(collection(db, 'households'), {
     name: name.trim(), memberIds: [], responderId: null, phone: '', address: '',
-    anniversary: null, extraContacts: [], createdBy: currentUser.uid, createdAt: serverTimestamp()
+    anniversary: null, contactIds: [], createdBy: currentUser.uid, createdAt: serverTimestamp()
   });
   return ref.id;
 }
@@ -3021,8 +3086,9 @@ function renderHouseholdsAdmin() {
   households.forEach(hh => {
     const box = document.createElement('div');
     box.className = 'hhEditor';
+    const hhContacts = familyContacts.filter(c => (c.householdIds || []).includes(hh.id));
     const memberCount = (hh.memberIds || []).length;
-    const extraCount = (hh.extraContacts || []).length;
+    const extraCount = hhContacts.length;
     const summary = `
       <div style="display:flex; justify-content:space-between; align-items:center; gap:10px">
         <div>
@@ -3039,15 +3105,23 @@ function renderHouseholdsAdmin() {
       return;
     }
 
+    // One unified checklist, real accounts and no-account contacts together — this used to be
+    // account-holders-only, which was the actual complaint ("why would those be the only
+    // options") that led to promoting extraContacts into its own collection in the first place.
     const memberOptions = allApprovedUsers.map(u => {
       const checked = (hh.memberIds || []).includes(u.id) ? 'checked' : '';
-      return `<label class="chk"><input type="checkbox" value="${u.id}" ${checked}> ${escapeHtml(u.name)}${ageBadgeHtml(u)}</label>`;
-    }).join('') || '<span class="hh">No approved members yet</span>';
+      return `<label class="chk"><input type="checkbox" data-type="user" value="${u.id}" ${checked}> ${escapeHtml(u.name)}${ageBadgeHtml(u)}</label>`;
+    }).join('');
+    const contactOptions = familyContacts.map(c => {
+      const checked = (c.householdIds || []).includes(hh.id) ? 'checked' : '';
+      return `<label class="chk"><input type="checkbox" data-type="contact" value="${c.id}" ${checked}> ${escapeHtml(c.name)}${c.deceased ? ' 🕊' : ''}${ageBadgeHtml(c)} <span class="noAccountBadge">no account</span></label>`;
+    }).join('');
+    const allOptions = memberOptions + contactOptions || '<span class="hh">Nobody in the family yet</span>';
     const responderOptions = (hh.memberIds || []).map(uid => {
       const u = usersById[uid];
       return `<option value="${uid}" ${hh.responderId === uid ? 'selected' : ''}>${escapeHtml(u ? u.name : uid)}</option>`;
     }).join('') || '<option value="">— add &amp; save members first —</option>';
-    const extraRows = (hh.extraContacts || []).map(ec => {
+    const extraRows = hhContacts.map(ec => {
       const state = ecUiState[ec.id];
       if (state === 'edit') {
         return `<div class="hhEditor" data-ecid="${ec.id}">
@@ -3063,22 +3137,10 @@ function renderHouseholdsAdmin() {
           </div>
         </div>`;
       }
-      if (state === 'move') {
-        return `<div class="hhEditor" data-ecid="${ec.id}">
-          <div class="nm">Move ${escapeHtml(ec.name)} to…</div>
-          ${householdPickerHtml('ecMoveTarget', hh.id)}
-          <div style="display:flex; gap:8px; margin-top:8px">
-            <button class="btn small ecMoveGo" data-id="${ec.id}">Move</button>
-            <button class="btn secondary small ecMoveNew" data-id="${ec.id}">+ New household</button>
-            <button class="btn secondary small ecCancelEdit" data-id="${ec.id}">Cancel</button>
-          </div>
-        </div>`;
-      }
       return `
       <div class="contactRow">
         <div><div class="nm">${escapeHtml(ec.name)}${ec.deceased ? ' 🕊' : ''}${ageBadgeHtml(ec)}${ec.phone || ec.email ? ` <span class="hh">${escapeHtml([ec.phone, ec.email].filter(Boolean).join(' · '))}</span>` : ''}</div></div>
         <button class="editBtn ecEditBtn" data-id="${ec.id}">✎</button>
-        <button class="editBtn ecMoveBtn" data-id="${ec.id}">🔀</button>
         <button class="editBtn ecDeceasedBtn" data-id="${ec.id}" title="Mark as deceased">${ec.deceased ? '↩' : '🕊'}</button>
         <button class="editBtn ecDel" data-id="${ec.id}">✕</button>
       </div>`;
@@ -3086,7 +3148,7 @@ function renderHouseholdsAdmin() {
     box.innerHTML = `
       ${summary}
       <div class="ecSection" style="border-top:none; margin-top:10px; padding-top:0">
-        <div class="chkGroup">${memberOptions}</div>
+        <div class="chkGroup">${allOptions}</div>
       <div class="field" style="margin-top:8px"><label>Responds for household (RSVPs/edits shared info)</label>
         <select class="hhResponder">${responderOptions}</select>
       </div>
@@ -3103,7 +3165,10 @@ function renderHouseholdsAdmin() {
       </div>
 
       <div class="ecSection">
-        <div class="nm" style="font-size:13px">Family members without their own account</div>
+        <div class="nm" style="font-size:13px">Family members without their own account, in this household</div>
+        <p class="hh">To add someone already entered elsewhere to this household too, check their box in the
+          list above instead — no-account contacts can belong to more than one household, same as real
+          accounts. This section is for editing their info, marking deceased, or removing them entirely.</p>
         <div style="margin-top:6px">${extraRows}</div>
         <div class="field" style="margin-top:10px"><label>Add one (name, birthdate, phone, email)</label>
           <div style="display:flex; gap:6px; flex-wrap:wrap">
@@ -3123,22 +3188,33 @@ function renderHouseholdsAdmin() {
     `;
     box.querySelector('.hhToggle').onclick = () => { expandedHouseholdIds.delete(hh.id); renderHouseholdsAdmin(); };
     box.querySelector('.hhSave').onclick = async () => {
-      const selected = Array.from(box.querySelectorAll('.chkGroup input[type=checkbox]:checked')).map(c => c.value);
+      const allChecked = Array.from(box.querySelectorAll('.chkGroup input[type=checkbox]:checked'));
+      const selectedUsers = allChecked.filter(c => c.dataset.type === 'user').map(c => c.value);
+      const selectedContacts = allChecked.filter(c => c.dataset.type === 'contact').map(c => c.value);
       const responderChoice = box.querySelector('.hhResponder').value || null;
-      const responderId = selected.includes(responderChoice) ? responderChoice : (selected[0] || null);
+      const responderId = selectedUsers.includes(responderChoice) ? responderChoice : (selectedUsers[0] || null);
       const batch = writeBatch(db);
-      batch.update(doc(db, 'households', hh.id), { memberIds: selected, responderId });
-      // Toggling someone into/out of THIS household only ever adds/removes THIS household from
-      // their own householdIds — any OTHER households they belong to are left alone, since a
-      // person can now belong to more than one at once (see userHouseholdIds()).
-      const prevSelected = new Set(hh.memberIds || []);
-      const nowSelected = new Set(selected);
+      batch.update(doc(db, 'households', hh.id), { memberIds: selectedUsers, contactIds: selectedContacts, responderId });
+      // Toggling someone (account or no-account contact) into/out of THIS household only ever
+      // adds/removes THIS household from their own record — any OTHER households they belong to
+      // are left alone, since a person can now belong to more than one at once.
+      const prevUsers = new Set(hh.memberIds || []);
+      const nowUsers = new Set(selectedUsers);
       allApprovedUsers.forEach(u => {
-        const was = prevSelected.has(u.id), now = nowSelected.has(u.id);
+        const was = prevUsers.has(u.id), now = nowUsers.has(u.id);
         if (was === now) return;
         const ids = userHouseholdIds(u);
         const updated = now ? [...new Set([...ids, hh.id])] : ids.filter(id => id !== hh.id);
         batch.update(doc(db, 'users', u.id), { householdIds: updated });
+      });
+      const prevContacts = new Set(hhContacts.map(c => c.id));
+      const nowContacts = new Set(selectedContacts);
+      familyContacts.forEach(c => {
+        const was = prevContacts.has(c.id), now = nowContacts.has(c.id);
+        if (was === now) return;
+        const ids = c.householdIds || [];
+        const updated = now ? [...new Set([...ids, hh.id])] : ids.filter(id => id !== hh.id);
+        batch.update(doc(db, 'contacts', c.id), { householdIds: updated });
       });
       await batch.commit();
     };
@@ -3148,6 +3224,9 @@ function renderHouseholdsAdmin() {
       (hh.memberIds || []).forEach(uid => {
         const u = usersById[uid];
         batch.update(doc(db, 'users', uid), { householdIds: userHouseholdIds(u).filter(id => id !== hh.id) });
+      });
+      hhContacts.forEach(c => {
+        batch.update(doc(db, 'contacts', c.id), { householdIds: (c.householdIds || []).filter(id => id !== hh.id) });
       });
       batch.delete(doc(db, 'households', hh.id));
       await batch.commit();
@@ -3161,84 +3240,71 @@ function renderHouseholdsAdmin() {
     };
     box.querySelectorAll('.ecDel').forEach(btn => {
       btn.onclick = async () => {
-        const updated = (hh.extraContacts || []).filter(ec => ec.id !== btn.dataset.id);
-        await updateDoc(doc(db, 'households', hh.id), { extraContacts: updated });
+        const ec = contactsById[btn.dataset.id];
+        if (!ec || !confirm(`Remove ${ec.name} entirely? This deletes them from every household they're in, not just this one.`)) return;
+        const batch = writeBatch(db);
+        (ec.householdIds || []).forEach(hhId => {
+          const targetHH = householdsById[hhId];
+          if (targetHH) batch.update(doc(db, 'households', hhId), { contactIds: (targetHH.contactIds || []).filter(id => id !== ec.id) });
+        });
+        batch.delete(doc(db, 'contacts', ec.id));
+        await batch.commit();
       };
     });
     box.querySelectorAll('.ecEditBtn').forEach(btn => {
       btn.onclick = () => { ecUiState[btn.dataset.id] = 'edit'; renderHouseholdsAdmin(); };
-    });
-    box.querySelectorAll('.ecMoveBtn').forEach(btn => {
-      btn.onclick = () => { ecUiState[btn.dataset.id] = 'move'; renderHouseholdsAdmin(); };
     });
     box.querySelectorAll('.ecCancelEdit').forEach(btn => {
       btn.onclick = () => { delete ecUiState[btn.dataset.id]; renderHouseholdsAdmin(); };
     });
     box.querySelectorAll('.ecDeceasedBtn').forEach(btn => {
       btn.onclick = async () => {
-        const updated = (hh.extraContacts || []).map(ec => ec.id === btn.dataset.id ? { ...ec, deceased: !ec.deceased } : ec);
-        await updateDoc(doc(db, 'households', hh.id), { extraContacts: updated });
+        const ec = contactsById[btn.dataset.id];
+        if (!ec) return;
+        await updateDoc(doc(db, 'contacts', ec.id), { deceased: !ec.deceased });
       };
     });
     box.querySelectorAll('.ecSaveEdit').forEach(btn => {
       btn.onclick = async () => {
         const form = box.querySelector(`[data-ecid="${btn.dataset.id}"]`);
-        const updated = (hh.extraContacts || []).map(ec => ec.id !== btn.dataset.id ? ec : {
-          ...ec,
-          name: form.querySelector('.ecEditName').value.trim() || ec.name,
+        await updateDoc(doc(db, 'contacts', btn.dataset.id), {
+          name: form.querySelector('.ecEditName').value.trim() || contactsById[btn.dataset.id].name,
           birthdate: form.querySelector('.ecEditBirthdate').value || null,
           phone: form.querySelector('.ecEditPhone').value.trim(),
           email: form.querySelector('.ecEditEmail').value.trim()
         });
-        await updateDoc(doc(db, 'households', hh.id), { extraContacts: updated });
         delete ecUiState[btn.dataset.id];
-      };
-    });
-    async function moveExtraContact(contactId, targetHouseholdId) {
-      const ec = (hh.extraContacts || []).find(c => c.id === contactId);
-      if (!ec || !targetHouseholdId) return;
-      const target = households.find(h => h.id === targetHouseholdId);
-      if (!target) return;
-      const batch = writeBatch(db);
-      batch.update(doc(db, 'households', hh.id), { extraContacts: (hh.extraContacts || []).filter(c => c.id !== contactId) });
-      batch.update(doc(db, 'households', targetHouseholdId), { extraContacts: [...(target.extraContacts || []), ec] });
-      await batch.commit();
-      delete ecUiState[contactId];
-    }
-    box.querySelectorAll('.ecMoveGo').forEach(btn => {
-      btn.onclick = () => {
-        const form = box.querySelector(`[data-ecid="${btn.dataset.id}"]`);
-        moveExtraContact(btn.dataset.id, form.querySelector('.ecMoveTarget').value);
-      };
-    });
-    box.querySelectorAll('.ecMoveNew').forEach(btn => {
-      btn.onclick = async () => {
-        const ec = (hh.extraContacts || []).find(c => c.id === btn.dataset.id);
-        const newId = await createHouseholdInline(ec ? ec.name + ' Family' : '');
-        if (newId) await moveExtraContact(btn.dataset.id, newId);
-        else renderHouseholdsAdmin();
       };
     });
     box.querySelector('.ecAddOne').onclick = async () => {
       const name = box.querySelector('.ecName').value.trim();
       if (!name) return;
-      const entry = {
-        id: crypto.randomUUID(), name,
-        birthdate: box.querySelector('.ecBirthdate').value || null,
-        phone: box.querySelector('.ecPhone').value.trim(),
-        email: box.querySelector('.ecEmail').value.trim()
-      };
-      await updateDoc(doc(db, 'households', hh.id), { extraContacts: [...(hh.extraContacts || []), entry] });
+      const batch = writeBatch(db);
+      const ref = doc(collection(db, 'contacts'));
+      batch.set(ref, {
+        name, birthdate: box.querySelector('.ecBirthdate').value || null,
+        phone: box.querySelector('.ecPhone').value.trim(), email: box.querySelector('.ecEmail').value.trim(),
+        deceased: false, householdIds: [hh.id], createdBy: currentUser.uid, createdAt: serverTimestamp()
+      });
+      batch.update(doc(db, 'households', hh.id), { contactIds: [...(hh.contactIds || []), ref.id] });
+      await batch.commit();
       box.querySelector('.ecName').value = ''; box.querySelector('.ecBirthdate').value = ''; box.querySelector('.ecPhone').value = ''; box.querySelector('.ecEmail').value = '';
     };
     box.querySelector('.ecAddBulk').onclick = async () => {
       const lines = box.querySelector('.ecBulk').value.split('\n').map(l => l.trim()).filter(Boolean);
       const newEntries = lines.map(line => {
         const [name, birthdate, phone, email] = line.split(',').map(p => (p || '').trim());
-        return name ? { id: crypto.randomUUID(), name, birthdate: birthdate || null, phone: phone || '', email: email || '' } : null;
+        return name ? { name, birthdate: birthdate || null, phone: phone || '', email: email || '' } : null;
       }).filter(Boolean);
       if (!newEntries.length) return;
-      await updateDoc(doc(db, 'households', hh.id), { extraContacts: [...(hh.extraContacts || []), ...newEntries] });
+      const batch = writeBatch(db);
+      const newIds = newEntries.map(entry => {
+        const ref = doc(collection(db, 'contacts'));
+        batch.set(ref, { ...entry, deceased: false, householdIds: [hh.id], createdBy: currentUser.uid, createdAt: serverTimestamp() });
+        return ref.id;
+      });
+      batch.update(doc(db, 'households', hh.id), { contactIds: [...(hh.contactIds || []), ...newIds] });
+      await batch.commit();
       box.querySelector('.ecBulk').value = '';
     };
     wrap.appendChild(box);
@@ -3479,7 +3545,7 @@ $('epCreateHouseholdBtn').onclick = async () => {
     const ref = await addDoc(collection(db, 'households'), {
       name, memberIds: isSelf ? [currentUser.uid] : [],
       responderId: isSelf ? currentUser.uid : null,
-      phone: '', address: '', anniversary: null, extraContacts: [],
+      phone: '', address: '', anniversary: null, contactIds: [],
       createdBy: currentUser.uid, createdAt: serverTimestamp()
     });
     if (isSelf) {
@@ -3813,8 +3879,13 @@ $('addrImportBtn').onclick = async () => {
   let householdCount = 0, matchedUserCount = 0, contactCount = 0;
   for (const block of good) {
     const existing = households.find(h => (h.name || '').toLowerCase() === block.name.toLowerCase());
-    const extraContacts = existing ? [...(existing.extraContacts || [])] : [];
+    // Doc IDs generate client-side before any write, so a brand-new household's id is known up
+    // front — needed below to link contacts/members to it even though the household doc itself
+    // isn't written until the end, same one-shot create-or-update shape as before.
+    const householdId = existing ? existing.id : doc(collection(db, 'households')).id;
+    const existingHhContacts = familyContacts.filter(c => (c.householdIds || []).includes(householdId));
     const memberIds = existing ? [...(existing.memberIds || [])] : [];
+    const contactIds = existing ? [...(existing.contactIds || [])] : [];
     let responderId = existing ? existing.responderId : null;
 
     for (const person of block.people) {
@@ -3828,27 +3899,34 @@ $('addrImportBtn').onclick = async () => {
         if (!matchedUser.phone && person.phone) {
           await updateDoc(doc(db, 'users', matchedUser.id), { phone: person.phone });
         }
+        if (!userHouseholdIds(matchedUser).includes(householdId)) {
+          await updateDoc(doc(db, 'users', matchedUser.id), { householdIds: [...userHouseholdIds(matchedUser), householdId] });
+        }
       } else {
-        const idx = extraContacts.findIndex(ec => ec.name.toLowerCase() === person.name.toLowerCase());
-        if (idx >= 0) {
-          extraContacts[idx] = {
-            ...extraContacts[idx],
-            phone: person.phone || extraContacts[idx].phone,
-            email: person.email || extraContacts[idx].email
-          };
+        const existingContact = existingHhContacts.find(ec => ec.name.toLowerCase() === person.name.toLowerCase());
+        if (existingContact) {
+          await updateDoc(doc(db, 'contacts', existingContact.id), {
+            phone: person.phone || existingContact.phone,
+            email: person.email || existingContact.email
+          });
         } else {
-          extraContacts.push({ id: crypto.randomUUID(), name: person.name, birthdate: null, phone: person.phone, email: person.email });
+          const ref = doc(collection(db, 'contacts'));
+          await setDoc(ref, {
+            name: person.name, birthdate: null, phone: person.phone, email: person.email,
+            deceased: false, householdIds: [householdId], createdBy: currentUser.uid, createdAt: serverTimestamp()
+          });
+          contactIds.push(ref.id);
         }
         contactCount++;
       }
     }
 
-    const payload = { memberIds, responderId, extraContacts };
+    const payload = { memberIds, contactIds, responderId };
     if (block.address) payload.address = block.address;
     if (existing) {
       await updateDoc(doc(db, 'households', existing.id), payload);
     } else {
-      await setDoc(doc(collection(db, 'households')), {
+      await setDoc(doc(db, 'households', householdId), {
         name: block.name, phone: '', anniversary: null, createdBy: currentUser.uid, createdAt: serverTimestamp(), ...payload
       });
     }
@@ -3871,8 +3949,7 @@ function guessYearFrom2Digit(yearRaw) {
 $('matchBirthdaysBtn').onclick = () => {
   const contactIndex = [];
   allApprovedUsers.forEach(u => contactIndex.push({ kind: 'user', uid: u.id, name: u.name, birthdate: u.birthdate }));
-  households.forEach(hh => (hh.extraContacts || []).forEach(ec =>
-    contactIndex.push({ kind: 'extra', householdId: hh.id, contactId: ec.id, name: ec.name, birthdate: ec.birthdate })));
+  familyContacts.forEach(ec => contactIndex.push({ kind: 'extra', contactId: ec.id, name: ec.name, birthdate: ec.birthdate }));
 
   const byName = {};
   contactIndex.forEach(c => { const k = normalizeName(c.name); (byName[k] = byName[k] || []).push(c); });
@@ -3941,10 +4018,15 @@ function renderUnmatchedBirthdays() {
     const hh = households.find(h => h.id === hhId);
     if (!hh) return;
     const birthdate = `${year}-${String(u.month).padStart(2, '0')}-${String(u.day).padStart(2, '0')}`;
-    const contactId = crypto.randomUUID();
-    const updated = [...(hh.extraContacts || []), { id: contactId, name: u.name, birthdate, phone: '', email: '' }];
-    await updateDoc(doc(db, 'households', hh.id), { extraContacts: updated });
-    await updateDoc(doc(db, 'occasions', u.occasionId), { linkedHouseholdId: hh.id, linkedContactId: contactId });
+    const batch = writeBatch(db);
+    const ref = doc(collection(db, 'contacts'));
+    batch.set(ref, {
+      name: u.name, birthdate, phone: '', email: '', deceased: false,
+      householdIds: [hh.id], createdBy: currentUser.uid, createdAt: serverTimestamp()
+    });
+    batch.update(doc(db, 'households', hh.id), { contactIds: [...(hh.contactIds || []), ref.id] });
+    batch.update(doc(db, 'occasions', u.occasionId), { linkedContactId: ref.id });
+    await batch.commit();
     _unmatchedBirthdays.splice(i, 1);
     renderUnmatchedBirthdays();
   }
@@ -3980,11 +4062,8 @@ $('applyBirthdaysBtn').onclick = async () => {
       await updateDoc(doc(db, 'users', m.contact.uid), { birthdate });
       await updateDoc(doc(db, 'occasions', m.occasionId), { linkedUserId: m.contact.uid });
     } else {
-      const hh = households.find(h => h.id === m.contact.householdId);
-      if (!hh) continue;
-      const updated = (hh.extraContacts || []).map(ec => ec.id === m.contact.contactId ? { ...ec, birthdate } : ec);
-      await updateDoc(doc(db, 'households', hh.id), { extraContacts: updated });
-      await updateDoc(doc(db, 'occasions', m.occasionId), { linkedHouseholdId: m.contact.householdId, linkedContactId: m.contact.contactId });
+      await updateDoc(doc(db, 'contacts', m.contact.contactId), { birthdate });
+      await updateDoc(doc(db, 'occasions', m.occasionId), { linkedContactId: m.contact.contactId });
     }
     applied++;
   }

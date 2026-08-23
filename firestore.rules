@@ -65,15 +65,36 @@ service cloud.firestore {
 
     match /branches/{branchId} {
       allow read: if isApprovedMember();
+      // Rewritten 2026-08-23: this used to try a self-service update rule keyed off
+      // me().householdId (the pre-multi-household singular field), which was already broken for
+      // anyone who joined a household after that migration. The replacement attempt (deriving
+      // "the one household id that changed" via Set operations) turned out to be unbuildable in
+      // Firestore's rules language — Set has no .toList()/indexing, so there is no way to pull a
+      // single element back out of a diffed Set to run a get() lookup against it, and there's no
+      // loop construct to check "for every changed id" either. Moved server-side instead: the
+      // updateBranchMembership Cloud Function (functions/index.js) does the same
+      // responder-or-admin check with ordinary JS and writes via the Admin SDK, which bypasses
+      // these rules entirely — same pattern already used for updateHouseholdMembership. Direct
+      // client writes to a branch doc stay admin-only.
       allow write: if isAdmin();
-      // Self-service: a household's responder can add or remove ONLY their own household
-      // in/out of a branch's householdIds — same pattern as household self-join above.
-      allow update: if isApprovedMember() &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['householdIds']) &&
-        me().householdId != null &&
-        get(/databases/$(database)/documents/households/$(me().householdId)).data.responderId == request.auth.uid &&
-        resource.data.householdIds.toSet().difference([me().householdId].toSet()) ==
-          request.resource.data.householdIds.toSet().difference([me().householdId].toSet());
+    }
+
+    match /contacts/{contactId} {
+      // A no-account family member (e.g. a young kid, or a relative who's never signed up) —
+      // promoted 2026-08-23 from a household-embedded array field to its own top-level
+      // document specifically so a contact can belong to more than one household at once, the
+      // same ability real accounts already have via users/{uid}.householdIds. See
+      // "Multi-household membership for no-account contacts" in CLAUDE.md for the full
+      // rationale and the migration this required.
+      //
+      // Deliberately "any approved member can manage any contact," not scoped to a specific
+      // household's responder — unlike a household or a branch, a contact has no single
+      // "owning" household once it can belong to several, so there's no clean single field to
+      // check permission against without an expensive multi-household lookup. Matches this
+      // app's existing low-security/high-convenience posture for a private, trusted family app
+      // (see storage.rules' albums/ comment for the same tradeoff made elsewhere).
+      allow read: if isApprovedMember();
+      allow create, update, delete: if isApprovedMember();
     }
 
     match /notifications/{notifId} {
