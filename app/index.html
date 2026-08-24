@@ -1153,6 +1153,8 @@ document.body.classList.toggle('large-text', localStorage.getItem('hom_largeText
 let currentUser = null;   // Firebase Auth user
 let myDoc = null;         // Firestore users/{uid} doc data
 let myHouseholds = [];    // Firestore households/{id} docs this user belongs to (0, 1, or many), cached
+let _lastEventsSnap = null; // most recent events onSnapshot, re-rendered when households load too (see initHouseholds)
+let _eventCardUnsubs = [];  // per-card rsvps/signups listeners from renderEventCard, torn down before each re-render
 let activeChannelId = 'family';
 let households = [], householdsById = {};
 // No-account family members ("contacts") — promoted 2026-08-23 from a household-embedded
@@ -1581,13 +1583,28 @@ $('digestInput').addEventListener('keydown', e => { if (e.key === 'Enter') $('di
 function initEvents() {
   const q = query(collection(db, 'events'), orderBy('createdAt', 'desc'));
   unsubEvents = onSnapshot(q, (snap) => {
-    const list = $('eventList');
-    list.innerHTML = '';
-    $('eventEmpty').style.display = snap.empty ? 'block' : 'none';
-    snap.forEach(d => renderEventCard(d.id, d.data(), list));
+    _lastEventsSnap = snap;
+    renderEventsList();
     eventsCount = snap.size;
     if (myDoc.role === 'admin') renderDashboard();
   });
+}
+
+// Split out from initEvents' onSnapshot so initHouseholds can also call it: the "RSVP for the
+// whole household" block depends on myHouseholds, a SEPARATE onSnapshot listener that resolves
+// independently and isn't guaranteed to land before this one — if households arrives second, the
+// household RSVP block would otherwise silently never appear even after myHouseholds is ready,
+// since nothing here re-runs unless the events collection itself changes. Re-rendering from the
+// households side too closes that race.
+function renderEventsList() {
+  if (!_lastEventsSnap) return;
+  const snap = _lastEventsSnap;
+  _eventCardUnsubs.forEach(unsub => unsub());
+  _eventCardUnsubs = [];
+  const list = $('eventList');
+  list.innerHTML = '';
+  $('eventEmpty').style.display = snap.empty ? 'block' : 'none';
+  snap.forEach(d => renderEventCard(d.id, d.data(), list));
 }
 
 function renderEventCard(id, ev, container) {
@@ -1652,14 +1669,25 @@ function renderEventCard(id, ev, container) {
     });
   });
 
-  onSnapshot(collection(db, 'events', id, 'rsvps'), (snap) => {
-    const counts = { yes: 0, maybe: 0, no: 0 };
+  _eventCardUnsubs.push(onSnapshot(collection(db, 'events', id, 'rsvps'), (snap) => {
+    const names = { yes: [], maybe: [], no: [] };
     let mine = null;
-    snap.forEach(r => { const s = r.data().status; if (counts[s] !== undefined) counts[s]++; if (r.id === currentUser.uid) mine = s; });
+    snap.forEach(r => {
+      const s = r.data().status;
+      if (names[s]) names[s].push(r.data().name || '(someone)');
+      if (r.id === currentUser.uid) mine = s;
+    });
     card.querySelectorAll('.rsvpMine button').forEach(b => b.classList.toggle('picked', b.dataset.status === mine));
     const rc = card.querySelector(`#rc-${id}`);
-    if (rc) rc.textContent = `${counts.yes} going · ${counts.maybe} maybe · ${counts.no} can't make it`;
-  });
+    if (rc) {
+      rc.innerHTML = `
+        <div>${names.yes.length} going · ${names.maybe.length} maybe · ${names.no.length} can't make it</div>
+        ${names.yes.length ? `<div class="hh">✅ Going: ${names.yes.map(escapeHtml).join(', ')}</div>` : ''}
+        ${names.maybe.length ? `<div class="hh">🤔 Maybe: ${names.maybe.map(escapeHtml).join(', ')}</div>` : ''}
+        ${names.no.length ? `<div class="hh">❌ Can't make it: ${names.no.map(escapeHtml).join(', ')}</div>` : ''}
+      `;
+    }
+  }));
 
   card.querySelector('.signupAddBtn').onclick = async () => {
     const input = card.querySelector('.signupItemInput');
@@ -1675,7 +1703,7 @@ function renderEventCard(id, ev, container) {
   };
   card.querySelector('.signupItemInput').addEventListener('keydown', e => { if (e.key === 'Enter') card.querySelector('.signupAddBtn').click(); });
 
-  onSnapshot(query(collection(db, 'events', id, 'signups'), orderBy('createdAt', 'asc')), (snap) => {
+  _eventCardUnsubs.push(onSnapshot(query(collection(db, 'events', id, 'signups'), orderBy('createdAt', 'asc')), (snap) => {
     const wrap = card.querySelector(`#signups-${id}`);
     if (!wrap) return;
     if (snap.empty) { wrap.innerHTML = '<div class="hh">Nothing on the list yet.</div>'; return; }
@@ -1706,7 +1734,7 @@ function renderEventCard(id, ev, container) {
     wrap.querySelectorAll('.signupDel').forEach(btn => {
       btn.onclick = async () => { await deleteDoc(doc(db, 'events', id, 'signups', btn.dataset.id)); };
     });
-  });
+  }));
 }
 
 async function rsvpHousehold(eventId, householdId, status) {
@@ -3053,6 +3081,7 @@ function initHouseholds() {
     renderMyHousehold();
     renderChannelList();
     populateWallAudiencePickers();
+    renderEventsList(); // re-render in case events' onSnapshot won this race and rendered before myHouseholds was ready
     if (myDoc.role === 'admin') { renderHouseholdsAdmin(); renderDashboard(); }
   });
 }
