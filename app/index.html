@@ -1767,6 +1767,8 @@ function initContacts() {
     renderMyHousehold();
     renderChannelList();
     populateWallAudiencePickers();
+    renderEventsList(); // describeAudience() reads usersById for named-individual invites — same race as the households case above
+    rerenderWallFeed(); // same race — describeAudience() on Wall posts also reads usersById
     if (myDoc.role === 'admin') { renderHouseholdsAdmin(); renderStaffList(); renderDashboard(); }
   });
 }
@@ -3082,6 +3084,7 @@ function initHouseholds() {
     renderChannelList();
     populateWallAudiencePickers();
     renderEventsList(); // re-render in case events' onSnapshot won this race and rendered before myHouseholds was ready
+    rerenderWallFeed(); // same race — describeAudience() on Wall posts also reads householdsById
     if (myDoc.role === 'admin') { renderHouseholdsAdmin(); renderDashboard(); }
   });
 }
@@ -3104,6 +3107,8 @@ function initBranches() {
     branches.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
     renderChannelList();
     populateWallAudiencePickers();
+    renderEventsList(); // describeAudience() reads branchesById for branch-invited events — same race as the households case above
+    rerenderWallFeed(); // same race — describeAudience() on Wall posts also reads branchesById
     if (myDoc.role === 'admin') { renderBranchesAdmin(); renderDashboard(); }
   });
 }
