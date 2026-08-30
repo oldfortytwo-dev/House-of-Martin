@@ -158,6 +158,69 @@ exports.weeklyDigest = onSchedule({
   await sendDigest(GMAIL_USER.value(), GMAIL_APP_PASSWORD.value());
 });
 
+// Auto-posts a Wall callout the morning of a birthday or anniversary, so the family sees it and
+// remembers to say something, instead of relying on someone happening to check the Calendar tab.
+// Runs server-side (not client-triggered) specifically to avoid every family member who opens the
+// app that day creating their own duplicate post — this writes exactly one combined post per day,
+// at a deterministic doc id (posts/spotlight_YYYY-MM-DD), so even if the schedule somehow fired
+// twice in one day the second run just overwrites the same doc instead of duplicating it.
+//
+// Deliberately excludes: 'memorial' occasions (death anniversaries) and any birthday occasion
+// flagged deceased — a cheerful "🎉 Happy Birthday!" callout would be exactly the wrong tone for
+// either. Remembering those is a separate, gentler feature if the family ever wants it; this one
+// stays purely celebratory.
+async function postBirthdaySpotlight(forDate) {
+  const now = forDate || new Date();
+  const month = now.getMonth() + 1, day = now.getDate();
+  const dateKey = now.toISOString().slice(0, 10);
+
+  const occSnap = await db.collection('occasions').get();
+  const todays = [];
+  occSnap.forEach(d => {
+    const o = d.data();
+    if (o.month !== month || o.day !== day) return;
+    if (o.type === 'birthday' && !o.deceased) todays.push({ icon: '🎂', text: o.name });
+    else if (o.type === 'anniversary') todays.push({ icon: '💍', text: o.name });
+  });
+  if (!todays.length) { console.log(`Birthday spotlight: nothing to celebrate on ${dateKey}.`); return { posted: false }; }
+
+  const lines = todays.map(t => `${t.icon} ${t.text}`).join('\n');
+  const heading = todays.length === 1
+    ? (todays[0].icon === '🎂' ? `🎉 Happy Birthday, ${todays[0].text}!` : `🎉 Happy Anniversary, ${todays[0].text}!`)
+    : `🎉 Celebrating today:`;
+  const text = todays.length === 1 ? heading : `${heading}\n${lines}`;
+
+  await db.collection('posts').doc('spotlight_' + dateKey).set({
+    text, authorId: 'system', authorName: '🎉 House of Martin', createdAt: Timestamp.now(),
+    audience: 'everyone', invitedHouseholdIds: [], invitedBranchIds: [], invitedUserIds: [], reactions: {},
+  });
+  console.log(`Birthday spotlight: posted ${todays.length} occasion(s) for ${dateKey}.`);
+  return { posted: true, count: todays.length };
+}
+
+exports.birthdaySpotlight = onSchedule({ schedule: '0 7 * * *', timeZone: 'America/New_York' }, async () => {
+  await postBirthdaySpotlight();
+});
+
+// Manual trigger for testing/verification, and a future "post now" admin button — mirrors
+// sendDigestNow's shape. Accepts an optional {date: 'YYYY-MM-DD'} so it can be tested against a
+// date other than today without waiting for a real occasion to line up.
+exports.postBirthdaySpotlightNow = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required.');
+  const callerSnap = await db.collection('users').doc(request.auth.uid).get();
+  const caller = callerSnap.data();
+  if (!caller || caller.status !== 'approved' || caller.role !== 'admin') {
+    throw new HttpsError('permission-denied', 'Admins only.');
+  }
+  const forDate = request.data?.date ? new Date(request.data.date + 'T12:00:00') : undefined;
+  try {
+    return await postBirthdaySpotlight(forDate);
+  } catch (err) {
+    console.error('postBirthdaySpotlight failed', err);
+    throw new HttpsError('internal', err.message || String(err));
+  }
+});
+
 exports.sendDigestNow = onCall({ secrets: [GMAIL_USER, GMAIL_APP_PASSWORD] }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required.');
   const callerSnap = await db.collection('users').doc(request.auth.uid).get();
