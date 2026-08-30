@@ -1054,7 +1054,7 @@ the last item on this list.
 app this size; the PWA install (real manifest + icon, see "PWA install" above) covers the same
 "icon on the home screen" need for free.
 
-**Open items (as of 2026-08-22):**
+**Open items (as of 2026-08-30) — all five below need a real person, not more building:**
 - **Push notifications — real-device round trip not yet confirmed.** Deployed, and every piece
   up to the actual OS notification has been verified (see "Push notifications" above), but Claude
   has no real production login and deliberately never held the private VAPID key, so the last
@@ -1133,6 +1133,21 @@ someone opens the map). Verified for real, not just code-reviewed: a live networ
 Nominatim correctly geocoded a real address and placed a working pin with a popup. Also set up a
 GitHub remote (`github.com/oldfortytwo-dev/House-of-Martin`, private) for this repo, which hadn't
 had one before.
+
+Then three more: an **online presence indicator** (a small green dot on someone's avatar in
+Contacts, the DM list, and their profile page — a 60s heartbeat to `users/{uid}.lastActiveAt`,
+only while the tab is actually visible, no second Firebase product needed since Firestore has no
+native disconnect event the way Realtime Database does); **camera capture + AI recipe
+extraction** in the Recipe Box composer (a dedicated "Take Photo" button alongside the existing
+gallery picker, plus a "✨ Let AI fill this in" button that sends the photo to a new
+`extractRecipeFromPhoto` Cloud Function — Claude Opus 5 vision, via the real `@anthropic-ai/sdk` —
+which OCRs a photographed recipe card into title/ingredients/instructions while the photo itself
+still gets saved as the recipe's photo either way; requires the `ANTHROPIC_API_KEY` secret, which
+Ryan has since set); and **Contacts/Calendar export** (vCard + CSV for the family directory,
+iCalendar + CSV for every birthday/anniversary/death-anniversary — all generated client-side from
+data already loaded, no server round-trip, with the same CSV formula-injection defense used in the
+sibling POS project's export). All verified against the emulator, not just code-reviewed, before
+deploying.
 
 ## Working Style / Preferences
 
