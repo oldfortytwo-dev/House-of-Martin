@@ -360,6 +360,7 @@
   .hhHeader:first-child { border-top: none; padding-top: 0; }
   .hhHeader .hh { font-weight: 400; }
   .respBadge { font-size: 10px; background: var(--accent-soft); color: var(--accent); padding: 2px 6px; border-radius: 8px; margin-left: 6px; font-weight: 600; vertical-align: middle; }
+  .presenceDot { position: absolute; bottom: -1px; right: -1px; background: #2ecc71; border-radius: 50%; border: 2px solid var(--card); }
   .ageBadge { font-size: 10px; background: #fde3b0; color: #7a5210; padding: 2px 6px; border-radius: 8px; margin-left: 6px; font-weight: 600; vertical-align: middle; }
   .editBtn { border: none; background: none; color: var(--ink-soft); font-size: 14px; cursor: pointer; padding: 4px; margin-left: 10px; }
   .contactRow .info { display: inline-flex; align-items: center; }
@@ -1378,6 +1379,7 @@ onAuthStateChanged(auth, (user) => {
     initAppearance();
     initNotifications();
     if (myDoc.role === 'admin') { initAdmin(); }
+    startPresenceHeartbeat();
   });
 });
 
@@ -1388,6 +1390,7 @@ function show(id) {
 function cleanupListeners() {
   [unsubMsgs, unsubEvents, unsubAlbums, unsubContacts, unsubPending, unsubInvites, unsubHouseholds, unsubBranches, unsubPhotos, unsubOccasions, unsubDMs, unsubDigest, unsubAppearance, unsubWall, unsubNotifs, unsubFamilyContacts, unsubStoryAnswers, unsubRecipes].forEach(u => u && u());
   unsubMsgs = unsubEvents = unsubAlbums = unsubContacts = unsubPending = unsubInvites = unsubHouseholds = unsubBranches = unsubPhotos = unsubOccasions = unsubDMs = unsubDigest = unsubAppearance = unsubWall = unsubNotifs = unsubFamilyContacts = unsubStoryAnswers = unsubRecipes = null;
+  if (_heartbeatInterval) { clearInterval(_heartbeatInterval); _heartbeatInterval = null; }
 }
 
 // ---------- Tab nav ----------
@@ -1465,7 +1468,7 @@ function renderChannelList() {
   dmChannels.forEach(dm => {
     const otherUid = (dm.participantIds || []).find(uid => uid !== currentUser.uid);
     const otherUser = otherUid && usersById[otherUid];
-    const avatar = avatarHtml(otherUser ? otherUser.name : '?', otherUser && otherUser.photoUrl, 18);
+    const avatar = otherUser ? avatarWithPresenceHtml(otherUser, 18) : avatarHtml('?', null, 18);
     const btn = chBtn(dm.id, `${avatar} ${escapeHtml(otherUser ? otherUser.name : 'Direct Message')}`, { isDM: true });
     $('channelList').appendChild(btn);
   });
@@ -2012,7 +2015,10 @@ function personLinkHtml(person, isMember, hh, { size, baseClass } = {}) {
   const linkClass = isMember ? 'profileLink' : 'contactDetailLink';
   const dataAttrs = isMember ? `data-uid="${person.id}"` : `data-ec="${person.id}"`;
   const attrs = `class="${baseClass} ${linkClass}" ${dataAttrs}`;
-  return { attrs, avatar: avatarHtml(person.name, person.photoUrl || null, px), badges, info };
+  // Only real accounts (isMember) have a lastActiveAt heartbeat — no-account contacts never show
+  // a presence dot, since there's no device to be "online."
+  const avatar = isMember ? avatarWithPresenceHtml(person, px) : avatarHtml(person.name, person.photoUrl || null, px);
+  return { attrs, avatar, badges, info };
 }
 
 function renderContactsAccordion(groups) {
@@ -2177,9 +2183,10 @@ function openProfile(uid) {
     : '<div class="hh">No household set</div>';
   $('profileHeader').innerHTML = `
     <div style="display:flex; align-items:center; gap:14px">
-      ${avatarHtml(u.name, u.photoUrl, 72)}
+      ${avatarWithPresenceHtml(u, 72)}
       <div>
         <div style="font-size:1.3em; font-weight:700">${escapeHtml(u.name)}${ageBadgeHtml(u)}</div>
+        ${isUserOnline(u) ? '<div class="hh" style="color:#2ecc71; font-weight:600">● Active recently</div>' : ''}
         ${u.role === 'admin' ? '<div class="hh">⭐ Admin</div>' : ''}
         ${hhLines}
         ${branchNames.length ? `<div class="hh">🌳 ${branchNames.map(escapeHtml).join(', ')}</div>` : ''}
@@ -4952,6 +4959,50 @@ function initialsFor(name) {
 // specifically were the ask, this reads the live large-text state at render time and requests a
 // bigger base size outright, which then ALSO gets the page zoom on top — a deliberate
 // disproportionate boost, not a bug.
+// ---------- Online presence ----------
+// Firestore has no native "disconnected" event the way Realtime Database's onDisconnect() does,
+// and this app deliberately doesn't run a second Firebase product just for a presence dot — so
+// this uses the standard Firestore-only workaround instead: a heartbeat. Each signed-in device
+// writes its own users/{uid}.lastActiveAt every 60s while the tab is actually visible (not just
+// open in the background), and anyone is considered "online" if their heartbeat landed within the
+// last 3 minutes — generous enough to survive a missed tick or a little network lag, tight enough
+// that closing the tab reads as offline within a few minutes rather than staying "online" for
+// hours. No rules change was needed: users/{userId}'s existing self-update rule already allows any
+// field except role/status, and lastActiveAt is neither.
+const ONLINE_THRESHOLD_MS = 3 * 60 * 1000;
+let _heartbeatInterval = null;
+
+function isUserOnline(u) {
+  if (!u || !u.lastActiveAt || !u.lastActiveAt.toDate) return false;
+  return (Date.now() - u.lastActiveAt.toDate().getTime()) < ONLINE_THRESHOLD_MS;
+}
+
+function startPresenceHeartbeat() {
+  const beat = () => {
+    if (document.visibilityState !== 'visible' || !currentUser) return;
+    updateDoc(doc(db, 'users', currentUser.uid), { lastActiveAt: serverTimestamp() }).catch(() => {});
+  };
+  beat(); // immediately, don't wait for the first interval tick
+  _heartbeatInterval = setInterval(beat, 60000);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') beat(); });
+}
+
+// Wraps avatarHtml() with a small green dot in the corner when the person is online — a separate
+// helper rather than changing avatarHtml() itself, since that function is called from many places
+// (Wall, DMs, notifications, comments, On This Day, Story Prompts...) where presence isn't the
+// point and adding a wrapper element to every call site isn't worth the churn. Used only in
+// Contacts and the profile page for now — the two places "is this person around right now"
+// actually matters.
+function avatarWithPresenceHtml(u, size) {
+  const px = size || 32;
+  const dotPx = Math.max(7, Math.round(px * 0.28));
+  const online = isUserOnline(u);
+  return `<span style="position:relative; display:inline-flex; flex-shrink:0">
+    ${avatarHtml(u.name, u.photoUrl, px)}
+    ${online ? `<span class="presenceDot" style="width:${dotPx}px; height:${dotPx}px" title="Active recently"></span>` : ''}
+  </span>`;
+}
+
 function avatarHtml(name, photoUrl, size) {
   let px = size || 32;
   if (document.body.classList.contains('large-text')) px = Math.round(px * 1.5);
