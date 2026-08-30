@@ -587,9 +587,21 @@
         <div style="display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap">
           <button class="btn small secondary" id="openMyHouseholdBtn" style="display:none; width:auto">🏠 Edit My Household</button>
           <button class="btn small secondary" id="openTreeBtn" style="width:auto">🌳 View Family Tree</button>
+          <button class="btn small secondary" id="openContactsExportBtn" style="width:auto">⬇️ Export</button>
         </div>
         <div id="contactList" class="card"></div>
       </section>
+
+      <!-- Contacts export modal -->
+      <div class="modalBg" id="contactsExportModalBg">
+        <div class="modalSheet">
+          <h3 style="margin-top:0">⬇️ Export Contacts</h3>
+          <p class="hh">Everyone currently in the family directory, real accounts and no-account family members alike.</p>
+          <button class="btn small" id="exportContactsVcfBtn" style="margin-bottom:8px">📇 vCard (.vcf) — import into your phone's Contacts app</button>
+          <button class="btn small secondary" id="exportContactsCsvBtn">📊 CSV — open in Excel/Sheets, or print</button>
+          <button class="btn secondary" id="contactsExportCloseBtn" style="margin-top:14px">Close</button>
+        </div>
+      </div>
 
       <!-- Family Tree modal -->
       <div class="modalBg" id="treeModalBg">
@@ -651,8 +663,20 @@
           <div id="occUpcoming"></div>
           <button class="btn small secondary" id="occShowAllBtn">Show full year</button>
           <div id="occFullYear" style="display:none; margin-top:10px"></div>
+          <button class="btn small secondary" id="openCalendarExportBtn" style="margin-top:10px">⬇️ Export</button>
         </div>
       </section>
+
+      <!-- Calendar export modal -->
+      <div class="modalBg" id="calendarExportModalBg">
+        <div class="modalSheet">
+          <h3 style="margin-top:0">⬇️ Export Calendar</h3>
+          <p class="hh">Every birthday, anniversary, and death anniversary currently tracked — repeats every year.</p>
+          <button class="btn small" id="exportCalendarIcsBtn" style="margin-bottom:8px">📅 iCalendar (.ics) — import into Google/Apple/Outlook Calendar</button>
+          <button class="btn small secondary" id="exportCalendarCsvBtn">📊 CSV — open in Excel/Sheets, or print</button>
+          <button class="btn secondary" id="calendarExportCloseBtn" style="margin-top:14px">Close</button>
+        </div>
+      </div>
 
       <!-- Wall -->
       <section class="tabpane" id="pane-photos">
@@ -5080,6 +5104,138 @@ $('shareCopyBtn').onclick = async () => {
   }
   setTimeout(() => { $('shareCopyBtn').textContent = '📋 Copy text to paste anywhere'; $('shareModalBg').classList.remove('open'); }, 1200);
 };
+
+// ---------- Export (Contacts -> vCard/CSV, Calendar -> iCalendar/CSV) ----------
+// All generated client-side from data already loaded — no server round-trip needed.
+
+function downloadFile(filename, content, mimeType) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// Defends against CSV/formula injection (a cell starting with =, +, -, or @ can execute as a
+// formula when the file is opened in Excel/Sheets) — same fix applied to the sibling POS
+// project's Order History export, for the same reason: this data (names, notes) is
+// user-controlled free text, not something we generated ourselves.
+function csvSafe(value) {
+  let s = String(value == null ? '' : value);
+  if (/^[=+\-@]/.test(s)) s = "'" + s;
+  return `"${s.replace(/"/g, '""')}"`;
+}
+function csvRow(cells) { return cells.map(csvSafe).join(',') + '\r\n'; }
+
+function vcfEscape(s) {
+  return String(s || '').replace(/\\/g, '\\\\').replace(/,/g, '\\,').replace(/;/g, '\\;').replace(/\n/g, '\\n');
+}
+function icsEscape(s) {
+  return String(s || '').replace(/\\/g, '\\\\').replace(/,/g, '\\,').replace(/;/g, '\\;').replace(/\n/g, '\\n');
+}
+
+// One combined list: real accounts (allApprovedUsers) + no-account family members
+// (familyContacts), each resolved against every household it belongs to for
+// name/address context — mirrors how Contacts itself already groups people.
+function exportablePeople() {
+  const people = [];
+  allApprovedUsers.forEach(u => {
+    const hhs = userHouseholdIds(u).map(id => householdsById[id]).filter(Boolean);
+    people.push({ name: u.name, phone: u.phone || '', email: u.email || '', birthdate: u.birthdate || '', households: hhs, isMember: true });
+  });
+  familyContacts.forEach(c => {
+    const hhs = (c.householdIds || []).map(id => householdsById[id]).filter(Boolean);
+    people.push({ name: c.name, phone: c.phone || '', email: c.email || '', birthdate: c.birthdate || '', households: hhs, isMember: false });
+  });
+  return people.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function buildContactsVcf() {
+  const cards = exportablePeople().map(p => {
+    const hhNames = p.households.map(h => h.name).join(' / ');
+    const addr = p.households.find(h => h.address)?.address || '';
+    const lines = ['BEGIN:VCARD', 'VERSION:3.0', `FN:${vcfEscape(p.name)}`, `N:${vcfEscape(p.name)};;;;`];
+    if (p.phone) lines.push(`TEL;TYPE=CELL:${vcfEscape(p.phone)}`);
+    if (p.email) lines.push(`EMAIL:${vcfEscape(p.email)}`);
+    if (p.birthdate) lines.push(`BDAY:${p.birthdate.replace(/-/g, '')}`);
+    if (addr) lines.push(`ADR;TYPE=HOME:;;${vcfEscape(addr)};;;;`);
+    if (hhNames) lines.push(`NOTE:Household: ${vcfEscape(hhNames)}`);
+    lines.push('END:VCARD');
+    return lines.join('\r\n');
+  });
+  return cards.join('\r\n') + '\r\n';
+}
+
+function buildContactsCsv() {
+  let out = csvRow(['Name', 'Phone', 'Email', 'Birthdate', 'Household', 'Address', 'Account']);
+  exportablePeople().forEach(p => {
+    out += csvRow([
+      p.name, p.phone, p.email, p.birthdate,
+      p.households.map(h => h.name).join(' / '),
+      p.households.find(h => h.address)?.address || '',
+      p.isMember ? 'Member' : 'No account'
+    ]);
+  });
+  return out;
+}
+
+$('openContactsExportBtn').onclick = () => $('contactsExportModalBg').classList.add('open');
+$('contactsExportCloseBtn').onclick = () => $('contactsExportModalBg').classList.remove('open');
+$('exportContactsVcfBtn').onclick = () => downloadFile('house-of-martin-contacts.vcf', buildContactsVcf(), 'text/vcard');
+$('exportContactsCsvBtn').onclick = () => downloadFile('house-of-martin-contacts.csv', buildContactsCsv(), 'text/csv');
+
+// occasions/{id}.type is 'birthday' | 'anniversary' | 'memorial' (see the Calendar section
+// above) — a deceased person's birthday entry (deceased:true) can ALSO carry its own
+// deathMonth/deathDay, distinct from the birth date, which the in-app Calendar view doesn't
+// currently surface as its own row but this export does, since it's real tracked data and
+// "death anniversaries" was asked for explicitly as its own category.
+function calendarExportItems() {
+  const items = [];
+  occasions.forEach(o => {
+    if (o.month && o.day) {
+      const label = o.type === 'anniversary' ? `💍 ${o.name} Anniversary`
+        : o.type === 'memorial' ? `🕊 In loving memory of ${o.name}`
+        : `🎂 ${o.name}'s Birthday`;
+      const kind = o.type === 'anniversary' ? 'Anniversary' : o.type === 'memorial' ? 'Death Anniversary' : 'Birthday';
+      items.push({ label, kind, name: o.name, month: o.month, day: o.day, year: o.yearRaw || null });
+    }
+    if (o.type === 'birthday' && o.deceased && o.deathMonth && o.deathDay) {
+      items.push({ label: `🕊 ${o.name} — Death Anniversary`, kind: 'Death Anniversary', name: o.name, month: o.deathMonth, day: o.deathDay, year: o.deathYearRaw || null });
+    }
+  });
+  return items;
+}
+
+function buildCalendarIcs() {
+  const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//House of Martin//Family Calendar//EN', 'CALSCALE:GREGORIAN'];
+  const year = new Date().getFullYear();
+  calendarExportItems().forEach((it, i) => {
+    const y = it.year && /^\d{4}$/.test(it.year) ? it.year : String(year);
+    const mm = String(it.month).padStart(2, '0'), dd = String(it.day).padStart(2, '0');
+    lines.push(
+      'BEGIN:VEVENT',
+      `UID:hom-${i}-${mm}${dd}@house-of-martin.web.app`,
+      `DTSTART;VALUE=DATE:${y}${mm}${dd}`,
+      'RRULE:FREQ=YEARLY',
+      `SUMMARY:${icsEscape(it.label)}`,
+      'END:VEVENT'
+    );
+  });
+  lines.push('END:VCALENDAR');
+  return lines.join('\r\n') + '\r\n';
+}
+
+function buildCalendarCsv() {
+  let out = csvRow(['Month', 'Day', 'Type', 'Name', 'Year (if known)']);
+  calendarExportItems().forEach(it => { out += csvRow([it.month, it.day, it.kind, it.name, it.year || '']); });
+  return out;
+}
+
+$('openCalendarExportBtn').onclick = () => $('calendarExportModalBg').classList.add('open');
+$('calendarExportCloseBtn').onclick = () => $('calendarExportModalBg').classList.remove('open');
+$('exportCalendarIcsBtn').onclick = () => downloadFile('house-of-martin-calendar.ics', buildCalendarIcs(), 'text/calendar');
+$('exportCalendarCsvBtn').onclick = () => downloadFile('house-of-martin-calendar.csv', buildCalendarCsv(), 'text/csv');
 </script>
 </body>
 </html>
