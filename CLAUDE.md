@@ -1118,9 +1118,10 @@ Prompts** (a new "📖 Stories" tab with a weekly rotating family-history questi
 text or a recorded voice clip, archived permanently — see the open item above for what's still
 unverified there). Followed by a fourth feature, the **Recipe Box** (a shared family recipe
 collection — title, optional photo, ingredients, instructions, an optional "why this recipe
-matters" story note — folded into the Wall tab as a "🍲 Show recipe box" toggle section rather
-than an 8th bottom-nav tab, mirroring the existing Albums pattern; author/admin can edit or delete,
-unlike Story Prompts' one-time-capture answers). Then an **event locations map**: every event
+matters" story note; author/admin can edit or delete, unlike Story Prompts' one-time-capture
+answers. Originally folded into the Wall tab as a toggle-able section (to avoid an 8th nav-bar
+button), but Ryan found it "almost have to stumble upon it" there — moved to its own bottom-nav
+tab the same day). Then an **event locations map**: every event
 card now has a "📍 Map" link (opens the address in Google Maps directly, no geocoding needed —
 Google resolves it), and a "🗺 Show map of events" toggle on the Events tab shows an embedded map
 with a pin for every upcoming event that has a location, using Nominatim (OpenStreetMap's free

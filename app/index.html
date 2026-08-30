@@ -672,14 +672,13 @@
           <div class="empty" id="albumEmpty" style="display:none">No albums yet. Tap + to start one.</div>
         </div>
 
-        <div style="margin:10px 0 8px; text-align:center">
-          <button class="btn small secondary" id="toggleRecipesBtn">🍲 Show recipe box</button>
-        </div>
-        <div id="recipesSection" style="display:none">
-          <button class="btn small secondary" id="openRecipeComposerBtn" style="margin-bottom:10px; width:auto">🍲 Add a Recipe</button>
-          <div class="albumGrid" id="recipeGrid"></div>
-          <div class="empty" id="recipeEmpty" style="display:none">No recipes yet. Add the first family favorite!</div>
-        </div>
+      </section>
+
+      <!-- Recipe Box -->
+      <section class="tabpane" id="pane-recipes">
+        <button class="btn small secondary" id="openRecipeComposerBtn" style="margin-bottom:10px; width:auto">🍲 Add a Recipe</button>
+        <div class="albumGrid" id="recipeGrid"></div>
+        <div class="empty" id="recipeEmpty" style="display:none">No recipes yet. Add the first family favorite!</div>
       </section>
 
       <!-- Recipe detail modal -->
@@ -698,8 +697,14 @@
             <div class="field"><label>Title</label><input type="text" id="recipeTitle" placeholder="Grandma's Apple Pie"></div>
             <div style="display:flex; gap:8px; margin-top:4px; align-items:center; flex-wrap:wrap">
               <input type="file" id="recipePhotoInput" accept="image/*" style="display:none">
+              <input type="file" id="recipeCameraInput" accept="image/*" capture="environment" style="display:none">
               <button class="btn small secondary" id="recipeAddPhotoBtn">📷 Add photo</button>
+              <button class="btn small secondary" id="recipeTakePhotoBtn">📸 Take photo</button>
               <span class="hh" id="recipePhotoPreviewName"></span>
+            </div>
+            <div id="recipeAiRow" style="display:none; margin-top:8px">
+              <button class="btn small secondary" id="recipeAnalyzeBtn">✨ Fill in from photo with AI</button>
+              <div class="hh" id="recipeAnalyzeStatus" style="margin-top:4px"></div>
             </div>
             <div class="field" style="margin-top:10px"><label>Ingredients</label>
               <textarea id="recipeIngredients" class="bulkPaste" rows="4" placeholder="One per line works great"></textarea>
@@ -924,6 +929,7 @@
       <button data-tab="calendar"><span class="ic">🎂</span><span class="lbl">Calendar</span></button>
       <button data-tab="photos"><span class="ic">🧱</span><span class="lbl">Wall</span></button>
       <button data-tab="stories"><span class="ic">📖</span><span class="lbl">Stories</span></button>
+      <button data-tab="recipes"><span class="ic">🍲</span><span class="lbl">Recipes</span></button>
       <button data-tab="admin" id="adminTabBtn" style="display:none"><span class="ic">⚙️</span><span class="lbl">Admin</span></button>
     </nav>
   </div>
@@ -2713,11 +2719,9 @@ $('toggleAlbumsBtn').onclick = () => {
 };
 
 // ---------- Recipe Box ----------
-// A shared family recipe collection, folded into the Wall tab as a toggle-able section rather
-// than its own bottom-nav tab — the nav bar is already tight at 7 buttons for an admin (Messages,
-// Events, Contacts, Calendar, Wall, Stories, Admin), and this mirrors the exact pattern already
-// used for Albums (a second content type living under Wall, shown on demand) rather than
-// introducing an 8th tab for a feature that doesn't need to be front-and-center every visit.
+// A shared family recipe collection. Originally folded into the Wall tab as a toggle-able
+// section (to avoid an 8th nav-bar button), but Ryan found it "almost have to stumble upon it"
+// there — moved to its own bottom-nav tab 2026-08-30 so it's not hidden behind a second click.
 let recipesById = {};
 let _recipePhotoFile = null, _editingRecipeId = null;
 
@@ -2777,6 +2781,8 @@ function openRecipeComposer(editId) {
   _recipePhotoFile = null;
   $('recipePhotoPreviewName').textContent = '';
   $('recipeSaveStatus').textContent = '';
+  $('recipeAiRow').style.display = 'none';
+  $('recipeAnalyzeStatus').textContent = '';
   if (editId) {
     const r = recipesById[editId];
     $('recipeComposerHeading').textContent = '✎ Edit Recipe';
@@ -2796,12 +2802,48 @@ function openRecipeComposer(editId) {
 $('openRecipeComposerBtn').onclick = () => openRecipeComposer(null);
 $('recipeComposerCloseBtn').onclick = () => $('recipeComposerModalBg').classList.remove('open');
 $('recipeAddPhotoBtn').onclick = () => $('recipePhotoInput').click();
-$('recipePhotoInput').addEventListener('change', (e) => {
+$('recipeTakePhotoBtn').onclick = () => $('recipeCameraInput').click();
+function handleRecipePhotoPicked(e) {
   const file = e.target.files[0];
   if (!file) return;
   _recipePhotoFile = file;
   $('recipePhotoPreviewName').textContent = file.name;
-});
+  // Offer the AI fill-in option once a photo is attached, from either source (gallery or camera).
+  $('recipeAiRow').style.display = 'block';
+  $('recipeAnalyzeStatus').textContent = '';
+}
+$('recipePhotoInput').addEventListener('change', handleRecipePhotoPicked);
+$('recipeCameraInput').addEventListener('change', handleRecipePhotoPicked);
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(',')[1]); // strip the "data:image/...;base64," prefix
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+$('recipeAnalyzeBtn').onclick = async () => {
+  if (!_recipePhotoFile) return;
+  $('recipeAnalyzeStatus').textContent = 'Reading the photo…';
+  try {
+    const imageBase64 = await fileToBase64(_recipePhotoFile);
+    const mediaType = _recipePhotoFile.type || 'image/jpeg';
+    $('recipeAnalyzeStatus').textContent = '✨ Analyzing with AI… this can take a few seconds';
+    const result = await httpsCallable(functions, 'extractRecipeFromPhoto')({ imageBase64, mediaType });
+    const { title, ingredients, instructions } = result.data;
+    // Fill in, don't silently overwrite anything the person already typed themselves.
+    if (title && !$('recipeTitle').value.trim()) $('recipeTitle').value = title;
+    if (ingredients && !$('recipeIngredients').value.trim()) $('recipeIngredients').value = ingredients;
+    if (instructions && !$('recipeInstructions').value.trim()) $('recipeInstructions').value = instructions;
+    $('recipeAnalyzeStatus').textContent = (title || ingredients || instructions)
+      ? '✅ Filled in from the photo — double-check it before saving.'
+      : "Couldn't read a recipe from that photo — try a clearer shot, or fill it in by hand.";
+  } catch (err) {
+    $('recipeAnalyzeStatus').textContent = 'Could not analyze photo: ' + (err.message || err);
+  }
+};
 
 $('recipeSaveBtn').onclick = async () => {
   const title = $('recipeTitle').value.trim();
@@ -2845,12 +2887,6 @@ $('recipeSaveBtn').onclick = async () => {
   } catch (err) {
     $('recipeSaveStatus').textContent = 'Could not save: ' + (err.message || err);
   }
-};
-
-$('toggleRecipesBtn').onclick = () => {
-  const showing = $('recipesSection').style.display !== 'none';
-  $('recipesSection').style.display = showing ? 'none' : 'block';
-  $('toggleRecipesBtn').textContent = showing ? '🍲 Show recipe box' : '🍲 Hide recipe box';
 };
 
 // ---------- Wall (post text + photo directly, no album required) ----------

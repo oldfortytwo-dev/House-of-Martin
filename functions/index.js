@@ -6,12 +6,19 @@ const { onDocumentCreated } = require('firebase-functions/v2/firestore');
 const { defineSecret } = require('firebase-functions/params');
 const nodemailer = require('nodemailer');
 const webpush = require('web-push');
+const Anthropic = require('@anthropic-ai/sdk');
 
 initializeApp();
 const db = getFirestore();
 
 const GMAIL_USER = defineSecret('GMAIL_USER');
 const GMAIL_APP_PASSWORD = defineSecret('GMAIL_APP_PASSWORD');
+// For the Recipe Box's "analyze photo with AI" button (extractRecipeFromPhoto below). Set with
+// `firebase functions:secrets:set ANTHROPIC_API_KEY` using a real key from console.anthropic.com
+// — this is a real paid API, unlike every other integration in this app (Nominatim/Leaflet for
+// the event map, Gmail SMTP for the digest) which are free. Each photo analyzed costs a small,
+// real amount — negligible at family-app volume, but worth knowing it's not free like the rest.
+const ANTHROPIC_API_KEY = defineSecret('ANTHROPIC_API_KEY');
 
 // Public half of the Web Push VAPID key pair — safe to hardcode, it's meant to be embedded in
 // client code (matches the same constant in app/index.html). Only the private half is secret.
@@ -430,4 +437,76 @@ exports.updateBranchMembership = onCall(async (request) => {
     await branchRef.update({ householdIds: householdIds.filter(id => id !== householdId) });
   }
   return { ok: true };
+});
+
+// Recipe Box's "✨ Analyze photo with AI" button — takes a photo of a handwritten, printed, or
+// screenshotted recipe and asks Claude's vision to transcribe it into the same title/ingredients/
+// instructions fields the composer already has, so someone can snap a photo of a recipe card
+// instead of retyping it. The photo itself is uploaded and kept as the recipe's photo either way
+// (this function only returns extracted text, never touches Storage) — this just pre-fills the
+// text fields, which the user can still edit before saving.
+exports.extractRecipeFromPhoto = onCall({ secrets: [ANTHROPIC_API_KEY] }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required.');
+  const callerSnap = await db.collection('users').doc(request.auth.uid).get();
+  const caller = callerSnap.data();
+  if (!caller || caller.status !== 'approved') throw new HttpsError('permission-denied', 'Not an approved member.');
+
+  const { imageBase64, mediaType } = request.data || {};
+  if (!imageBase64 || typeof imageBase64 !== 'string') {
+    throw new HttpsError('invalid-argument', 'imageBase64 is required.');
+  }
+  if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(mediaType)) {
+    throw new HttpsError('invalid-argument', 'mediaType must be a supported image type.');
+  }
+  // request.data goes over the wire as JSON, so a huge base64 string means a huge request —
+  // cap well under Cloud Functions' request size limit rather than let an oversized photo
+  // through untested.
+  if (imageBase64.length > 12 * 1024 * 1024) {
+    throw new HttpsError('invalid-argument', 'Photo is too large to analyze — try a smaller photo.');
+  }
+
+  const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY.value() });
+  let response;
+  try {
+    response = await client.messages.create({
+      model: 'claude-opus-5',
+      max_tokens: 2000,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'image', source: { type: 'base64', media_type: mediaType, data: imageBase64 } },
+          {
+            type: 'text',
+            text: 'This is a photo of a recipe — handwritten, printed, or a screenshot. Transcribe it '
+              + 'into a JSON object with exactly these three keys: "title" (string), "ingredients" '
+              + '(string, one ingredient per line), "instructions" (string, one step per line). If the '
+              + 'photo genuinely is not a recipe, or a field truly cannot be read, use an empty string '
+              + 'for that field rather than guessing. Respond with ONLY the JSON object — no markdown '
+              + 'fences, no other text.'
+          }
+        ]
+      }]
+    });
+  } catch (err) {
+    console.error('extractRecipeFromPhoto: Anthropic API call failed', err);
+    throw new HttpsError('internal', 'Could not reach the AI service. Please try again.');
+  }
+
+  const textBlock = response.content.find(b => b.type === 'text');
+  if (!textBlock) throw new HttpsError('internal', 'The AI did not return a readable response.');
+
+  let parsed;
+  try {
+    // Strip a markdown code fence if the model added one despite being asked not to.
+    const cleaned = textBlock.text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+    parsed = JSON.parse(cleaned);
+  } catch (err) {
+    throw new HttpsError('internal', "Couldn't understand the AI's response — try a clearer photo.");
+  }
+
+  return {
+    title: typeof parsed.title === 'string' ? parsed.title : '',
+    ingredients: typeof parsed.ingredients === 'string' ? parsed.ingredients : '',
+    instructions: typeof parsed.instructions === 'string' ? parsed.instructions : '',
+  };
 });
