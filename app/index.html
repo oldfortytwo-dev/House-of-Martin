@@ -1782,6 +1782,7 @@ function initContacts() {
     renderEventsList(); // describeAudience() reads usersById for named-individual invites — same race as the households case above
     rerenderWallFeed(); // same race — describeAudience() on Wall posts also reads usersById
     rerenderMessages(); // same race — sender photos in the open channel also read usersById
+    rerenderNotifications(); // same race — notifRowHtml() actor photos also read usersById
     if (myDoc.role === 'admin') { renderHouseholdsAdmin(); renderStaffList(); renderDashboard(); }
   });
 }
@@ -2126,8 +2127,15 @@ function notifRowHtml(id, n) {
 }
 
 let _notifDocIds = [];
+let _lastNotifSnap = null;
+// Same race as Events/Wall/DMs: notifRowHtml() reads usersById for the actor's photo, but this
+// only re-rendered on notification changes — a notification that arrived before contacts
+// finished loading (e.g. right at startup) would show an initials-only avatar forever. Called
+// from the contacts listener too, once it updates.
+function rerenderNotifications() { if (_lastNotifSnap) renderNotifications(_lastNotifSnap); }
 
 function renderNotifications(snap) {
+  _lastNotifSnap = snap;
   const docs = snap.docs.slice().sort((a, b) => (b.data().createdAt ? b.data().createdAt.toMillis() : 0) - (a.data().createdAt ? a.data().createdAt.toMillis() : 0));
   _notifDocIds = docs.map(d => d.id);
   const unread = docs.filter(d => !d.data().read).length;
@@ -3128,6 +3136,10 @@ function initBranches() {
     populateWallAudiencePickers();
     renderEventsList(); // describeAudience() reads branchesById for branch-invited events — same race as the households case above
     rerenderWallFeed(); // same race — describeAudience() on Wall posts also reads branchesById
+    // renderMyHousehold()'s "Groups (branches) this household belongs to" checklist (mhBranchChk)
+    // reads branches directly — same race: if households loaded first, that call already ran with
+    // an empty branches[], showing "No groups set up yet" even when branches actually exist.
+    renderMyHousehold();
     if (myDoc.role === 'admin') { renderBranchesAdmin(); renderDashboard(); }
   });
 }
