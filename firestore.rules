@@ -162,8 +162,25 @@ service cloud.firestore {
 
       match /rsvps/{rsvpId} {
         allow read: if isApprovedMember() || isFriendInvitedTo(eventId, 'events');
+        // Chaos-tested 2026-08-29 and found broken: this used to only check
+        // request.resource.data.submittedBy == request.auth.uid, which never actually
+        // constrained WHICH rsvpId could be written — any approved member could silently
+        // overwrite any OTHER person's individual RSVP on any event, as long as they set
+        // submittedBy to their own uid. The doc id (rsvpId) is a person's uid, and the only two
+        // legitimate writers of it are: that person themselves (self-RSVP), or the responder of
+        // a household rsvpId actually belongs to, submitting on that household's behalf
+        // (rsvpHousehold() in app/index.html). Both are now checked explicitly.
         allow write: if (isApprovedMember() || isFriendInvitedTo(eventId, 'events'))
-          && request.resource.data.submittedBy == request.auth.uid;
+          && request.resource.data.submittedBy == request.auth.uid
+          && (
+            rsvpId == request.auth.uid ||
+            (
+              request.resource.data.viaHousehold == true &&
+              request.resource.data.householdId is string &&
+              get(/databases/$(database)/documents/households/$(request.resource.data.householdId)).data.responderId == request.auth.uid &&
+              rsvpId in get(/databases/$(database)/documents/households/$(request.resource.data.householdId)).data.memberIds
+            )
+          );
       }
 
       // Potluck-style sign-up items: anyone can suggest an item (claimed or not),
