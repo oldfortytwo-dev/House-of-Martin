@@ -690,6 +690,34 @@
         </div>
       </div>
 
+      <!-- Story Prompts -->
+      <section class="tabpane" id="pane-stories">
+        <div class="card" id="storyPromptCard">
+          <h3 style="margin-top:0">📖 This Week's Question</h3>
+          <div id="storyPromptText" style="font-size:16px; font-weight:600; margin-bottom:12px"></div>
+          <textarea id="storyTextInput" class="bulkPaste" rows="3" placeholder="Type your answer... or record a voice answer below"></textarea>
+          <div style="display:flex; gap:8px; margin-top:8px; align-items:center; flex-wrap:wrap">
+            <button class="btn small secondary" id="storyRecordBtn">🎤 Record a voice answer</button>
+            <span class="hh" id="storyRecordStatus"></span>
+          </div>
+          <div id="storyRecordPreview" style="display:none; margin-top:8px">
+            <audio id="storyAudioPreview" controls style="width:100%"></audio>
+            <button class="btn small secondary" id="storyDiscardRecordingBtn" style="margin-top:6px">✕ Discard recording</button>
+          </div>
+          <button class="btn small" id="storySubmitBtn" style="margin-top:10px">Share my answer</button>
+          <div class="uploadStatus" id="storySubmitStatus"></div>
+        </div>
+
+        <h3 id="storyThisWeekHeading" style="margin:18px 0 8px">This week's answers</h3>
+        <div id="storyThisWeekList"></div>
+        <div class="empty" id="storyThisWeekEmpty" style="display:none">No one's answered yet this week — be the first!</div>
+
+        <div style="margin:18px 0 8px; text-align:center">
+          <button class="btn small secondary" id="toggleStoryArchiveBtn">🗄 Show past questions</button>
+        </div>
+        <div id="storyArchiveSection" style="display:none"></div>
+      </section>
+
       <!-- Admin -->
       <section class="tabpane" id="pane-admin">
         <details class="adminAcc" id="dashboardCard" open>
@@ -839,6 +867,7 @@
       <button data-tab="contacts"><span class="ic">📇</span><span class="lbl">Contacts</span></button>
       <button data-tab="calendar"><span class="ic">🎂</span><span class="lbl">Calendar</span></button>
       <button data-tab="photos"><span class="ic">🧱</span><span class="lbl">Wall</span></button>
+      <button data-tab="stories"><span class="ic">📖</span><span class="lbl">Stories</span></button>
       <button data-tab="admin" id="adminTabBtn" style="display:none"><span class="ic">⚙️</span><span class="lbl">Admin</span></button>
     </nav>
   </div>
@@ -1187,7 +1216,7 @@ let pendingCount = 0, eventsCount = 0, albumsCount = 0;
 let unsubMsgs = null, unsubEvents = null, unsubAlbums = null, unsubContacts = null, unsubPending = null,
     unsubInvites = null, unsubHouseholds = null, unsubBranches = null, unsubPhotos = null, unsubOccasions = null,
     unsubDMs = null, unsubDigest = null, unsubAppearance = null, unsubWall = null, unsubNotifs = null,
-    unsubFamilyContacts = null;
+    unsubFamilyContacts = null, unsubStoryAnswers = null;
 let _openAlbumId = null;
 let _wallPhotoFile = null;
 
@@ -1285,6 +1314,7 @@ onAuthStateChanged(auth, (user) => {
     initEvents();
     initAlbums();
     initWall();
+    initStories();
     initContacts();
     initOccasions();
     initDMs();
@@ -1300,8 +1330,8 @@ function show(id) {
 }
 
 function cleanupListeners() {
-  [unsubMsgs, unsubEvents, unsubAlbums, unsubContacts, unsubPending, unsubInvites, unsubHouseholds, unsubBranches, unsubPhotos, unsubOccasions, unsubDMs, unsubDigest, unsubAppearance, unsubWall, unsubNotifs, unsubFamilyContacts].forEach(u => u && u());
-  unsubMsgs = unsubEvents = unsubAlbums = unsubContacts = unsubPending = unsubInvites = unsubHouseholds = unsubBranches = unsubPhotos = unsubOccasions = unsubDMs = unsubDigest = unsubAppearance = unsubWall = unsubNotifs = unsubFamilyContacts = null;
+  [unsubMsgs, unsubEvents, unsubAlbums, unsubContacts, unsubPending, unsubInvites, unsubHouseholds, unsubBranches, unsubPhotos, unsubOccasions, unsubDMs, unsubDigest, unsubAppearance, unsubWall, unsubNotifs, unsubFamilyContacts, unsubStoryAnswers].forEach(u => u && u());
+  unsubMsgs = unsubEvents = unsubAlbums = unsubContacts = unsubPending = unsubInvites = unsubHouseholds = unsubBranches = unsubPhotos = unsubOccasions = unsubDMs = unsubDigest = unsubAppearance = unsubWall = unsubNotifs = unsubFamilyContacts = unsubStoryAnswers = null;
 }
 
 // ---------- Tab nav ----------
@@ -1788,6 +1818,7 @@ function initContacts() {
     rerenderMessages(); // same race — sender photos in the open channel also read usersById
     rerenderNotifications(); // same race — notifRowHtml() actor photos also read usersById
     rerenderOnThisDay(); // same race — On This Day author photos also read usersById
+    rerenderStoryAnswers(); // same race — story answer author photos also read usersById
     if (myDoc.role === 'admin') { renderHouseholdsAdmin(); renderStaffList(); renderDashboard(); }
   });
 }
@@ -2632,6 +2663,204 @@ function renderOnThisDay(matches) {
       </div>`;
   }).join('');
 }
+
+// ---------- Story Prompts ----------
+// A weekly rotating question ("What's your favorite Christmas memory?") answerable by text or a
+// short recorded voice clip, archived permanently — built to be the thing that gets a story out
+// of a relative who'd never sit down and "write their memoirs," and to give an older family
+// member who doesn't love typing a way to answer that isn't a wall of text. See the
+// family-features discussion for the full rationale.
+//
+// The prompt itself is deterministic (this week's ISO week number picks an index into PROMPTS),
+// not stored in Firestore — every device shows the same question with zero admin setup, and the
+// list can grow over time without a migration. Each answer stores its own promptText verbatim
+// (not just an index), so the archive stays correct even if PROMPTS is edited or reordered later.
+const STORY_PROMPTS = [
+  "What's your favorite family holiday memory?",
+  "What's a family recipe or dish that always brings back memories?",
+  "Tell us about the house or town you grew up in.",
+  "What's the best piece of advice a parent or grandparent gave you?",
+  "What was your first job, and what do you remember about it?",
+  "Tell us about how you met your spouse or partner.",
+  "What's a family tradition you hope never disappears?",
+  "What was your favorite thing to do as a kid?",
+  "Tell us a story about a family pet you'll never forget.",
+  "What's the funniest thing that's ever happened at a family gathering?",
+  "What's a lesson you learned the hard way that you'd want the family to know?",
+  "Tell us about a trip or vacation that stands out in your memory.",
+  "What music, movies, or shows remind you of a specific time in your life?",
+  "What's something about our family history you think younger relatives don't know?",
+  "What's a challenge you overcame that you're proud of?",
+  "Tell us about your grandparents — what were they like?",
+  "What's the best gift you've ever given or received?",
+  "What did a typical family dinner look like when you were young?",
+  "What's a skill or hobby you wish more of the family knew how to do?",
+  "Tell us about your wedding day, or someone else's you remember well.",
+  "What's something you were afraid of as a kid?",
+  "What's a family saying or inside joke that always makes you laugh?",
+  "Tell us about the proudest moment of your life so far.",
+  "What was school like for you growing up?",
+  "What's a place you'd love to take the whole family someday?",
+  "Tell us about a time the family really came together to help each other.",
+  "What's something you hope this family is still doing 50 years from now?",
+  "What's the best piece of advice you'd give to your younger self?",
+  "Tell us about a friend who became family over the years.",
+  "What does home mean to you?",
+];
+
+function isoWeekKey(date) {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  const weekNum = Math.ceil(((d - yearStart) / 86400000 + 1) / 7);
+  return { key: `${d.getUTCFullYear()}-W${String(weekNum).padStart(2, '0')}`, weekNum };
+}
+function currentStoryPrompt() {
+  const { key, weekNum } = isoWeekKey(new Date());
+  return { weekKey: key, text: STORY_PROMPTS[weekNum % STORY_PROMPTS.length] };
+}
+
+let _storyMediaRecorder = null, _storyRecordedChunks = [], _storyRecordingBlob = null, _storyArchiveLoaded = false;
+// Small id->data cache so the delete handler can find an answer's audioStoragePath without a
+// re-fetch — populated by both the this-week listener and the archive's one-time load.
+let _storyAnswerCache = {};
+
+let _lastStorySnap = null;
+// Same listener race as Events/Wall/DMs/notifications/On This Day: storyAnswerRowHtml() reads
+// usersById for the author's photo, but usersById loads on its own separate listener.
+function rerenderStoryAnswers() { if (_lastStorySnap) renderStoryAnswers(_lastStorySnap); }
+
+function initStories() {
+  const { weekKey, text } = currentStoryPrompt();
+  $('storyPromptText').textContent = text;
+  const q = query(collection(db, 'storyAnswers'), where('promptWeekKey', '==', weekKey), orderBy('createdAt', 'asc'));
+  unsubStoryAnswers = onSnapshot(q, (snap) => {
+    _lastStorySnap = snap;
+    renderStoryAnswers(snap);
+  });
+}
+
+function renderStoryAnswers(snap) {
+  snap.forEach(d => { _storyAnswerCache[d.id] = d.data(); });
+  $('storyThisWeekEmpty').style.display = snap.empty ? 'block' : 'none';
+  $('storyThisWeekList').innerHTML = snap.docs.map(d => storyAnswerRowHtml(d.id, d.data())).join('');
+  wireStoryAnswerRows($('storyThisWeekList'));
+}
+
+function storyAnswerRowHtml(id, a) {
+  const who = usersById[a.authorId];
+  const photo = who && who.photoUrl;
+  const when = a.createdAt && a.createdAt.toDate ? a.createdAt.toDate().toLocaleDateString([], { dateStyle: 'medium' }) : '';
+  const canDelete = a.authorId === currentUser.uid || (myDoc && myDoc.role === 'admin');
+  return `
+    <div class="card storyAnswerRow" data-id="${id}" style="margin-bottom:10px">
+      <div style="display:flex; gap:10px; align-items:flex-start">
+        <span class="profileLink" data-uid="${a.authorId}">${avatarHtml(a.authorName, photo, 32)}</span>
+        <div style="flex:1; min-width:0">
+          <div class="nm">${escapeHtml(a.authorName || '')} <span class="hh">${when}</span></div>
+          ${a.text ? `<div style="font-size:14px; margin-top:4px; white-space:pre-wrap">${escapeHtml(a.text)}</div>` : ''}
+          ${a.audioUrl ? `<audio controls src="${a.audioUrl}" style="width:100%; margin-top:6px"></audio>` : ''}
+        </div>
+        ${canDelete ? `<button class="editBtn storyDelBtn" data-id="${id}">✕</button>` : ''}
+      </div>
+    </div>`;
+}
+function wireStoryAnswerRows(container) {
+  container.querySelectorAll('.storyDelBtn').forEach(btn => {
+    btn.onclick = async () => {
+      if (!confirm('Delete this answer?')) return;
+      const a = _storyAnswerCache[btn.dataset.id];
+      await deleteDoc(doc(db, 'storyAnswers', btn.dataset.id));
+      if (a && a.audioStoragePath) { try { await deleteObject(ref(storage, a.audioStoragePath)); } catch (err) { console.warn('Storage delete failed', err); } }
+    };
+  });
+}
+
+$('toggleStoryArchiveBtn').onclick = async () => {
+  const showing = $('storyArchiveSection').style.display !== 'none';
+  if (showing) { $('storyArchiveSection').style.display = 'none'; $('toggleStoryArchiveBtn').textContent = '🗄 Show past questions'; return; }
+  $('toggleStoryArchiveBtn').textContent = '🗄 Hide past questions';
+  $('storyArchiveSection').style.display = 'block';
+  if (_storyArchiveLoaded) return;
+  _storyArchiveLoaded = true;
+  $('storyArchiveSection').innerHTML = '<div class="hh">Loading past answers…</div>';
+  const { weekKey: currentWeekKey } = currentStoryPrompt();
+  const snap = await getDocs(query(collection(db, 'storyAnswers'), orderBy('createdAt', 'desc')));
+  snap.forEach(d => { _storyAnswerCache[d.id] = d.data(); });
+  const byWeek = {};
+  snap.forEach(d => {
+    const a = d.data();
+    if (a.promptWeekKey === currentWeekKey) return; // this week already shown above
+    (byWeek[a.promptWeekKey] = byWeek[a.promptWeekKey] || { promptText: a.promptText, answers: [] }).answers.push({ id: d.id, ...a });
+  });
+  const weekKeys = Object.keys(byWeek).sort().reverse();
+  if (!weekKeys.length) { $('storyArchiveSection').innerHTML = '<div class="empty">No past questions answered yet.</div>'; return; }
+  $('storyArchiveSection').innerHTML = weekKeys.map(wk => {
+    const group = byWeek[wk];
+    return `<div class="hhHeader"><span>${escapeHtml(group.promptText)}</span></div>` +
+      group.answers.map(a => storyAnswerRowHtml(a.id, a)).join('');
+  }).join('');
+  wireStoryAnswerRows($('storyArchiveSection'));
+};
+
+$('storyRecordBtn').onclick = async () => {
+  if (_storyMediaRecorder && _storyMediaRecorder.state === 'recording') {
+    _storyMediaRecorder.stop();
+    return;
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    _storyRecordedChunks = [];
+    _storyMediaRecorder = new MediaRecorder(stream);
+    _storyMediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) _storyRecordedChunks.push(e.data); };
+    _storyMediaRecorder.onstop = () => {
+      stream.getTracks().forEach(t => t.stop());
+      _storyRecordingBlob = new Blob(_storyRecordedChunks, { type: 'audio/webm' });
+      $('storyAudioPreview').src = URL.createObjectURL(_storyRecordingBlob);
+      $('storyRecordPreview').style.display = 'block';
+      $('storyRecordBtn').textContent = '🎤 Record a voice answer';
+      $('storyRecordStatus').textContent = '';
+    };
+    _storyMediaRecorder.start();
+    $('storyRecordBtn').textContent = '⏹ Stop recording';
+    $('storyRecordStatus').textContent = 'Recording…';
+  } catch (err) {
+    $('storyRecordStatus').textContent = 'Could not access microphone: ' + (err.message || err);
+  }
+};
+$('storyDiscardRecordingBtn').onclick = () => {
+  _storyRecordingBlob = null;
+  $('storyRecordPreview').style.display = 'none';
+  $('storyAudioPreview').src = '';
+};
+
+$('storySubmitBtn').onclick = async () => {
+  const text = $('storyTextInput').value.trim();
+  if (!text && !_storyRecordingBlob) { $('storySubmitStatus').textContent = 'Type an answer or record a voice clip first.'; return; }
+  $('storySubmitStatus').textContent = _storyRecordingBlob ? 'Sharing (uploading recording)…' : 'Sharing…';
+  try {
+    const { weekKey, text: promptText } = currentStoryPrompt();
+    const answerRef = doc(collection(db, 'storyAnswers'));
+    let audioUrl = null, audioStoragePath = null;
+    if (_storyRecordingBlob) {
+      audioStoragePath = `storyAudio/${answerRef.id}.webm`;
+      const sRef = ref(storage, audioStoragePath);
+      await uploadBytes(sRef, _storyRecordingBlob, { customMetadata: { uploaderId: currentUser.uid } });
+      audioUrl = await getDownloadURL(sRef);
+    }
+    await setDoc(answerRef, {
+      promptWeekKey: weekKey, promptText, authorId: currentUser.uid, authorName: myDoc.name,
+      text: text || null, audioUrl, audioStoragePath, createdAt: serverTimestamp()
+    });
+    $('storyTextInput').value = '';
+    _storyRecordingBlob = null;
+    $('storyRecordPreview').style.display = 'none';
+    $('storySubmitStatus').textContent = '';
+  } catch (err) {
+    $('storySubmitStatus').textContent = 'Could not share: ' + (err.message || err);
+  }
+};
 
 function renderWallFeed(snap) {
     const wrap = $('wallFeed');

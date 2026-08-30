@@ -240,5 +240,15 @@ service cloud.firestore {
         allow delete: if isAdmin() || (signedIn() && resource.data.authorId == request.auth.uid);
       }
     }
+
+    match /storyAnswers/{answerId} {
+      // Weekly story-prompt answers (text and/or a recorded voice clip) — same
+      // author/admin-only write shape as posts/comments above. No update rule: an answer is
+      // meant to be a one-time capture, not something silently edited after the fact — someone
+      // who wants to change their answer deletes it and submits a new one.
+      allow read: if isApprovedMember();
+      allow create: if isApprovedMember() && request.resource.data.authorId == request.auth.uid;
+      allow delete: if isAdmin() || (signedIn() && resource.data.authorId == request.auth.uid);
+    }
   }
 }
