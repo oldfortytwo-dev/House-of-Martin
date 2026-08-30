@@ -10,6 +10,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@600&family=Fredoka:wght@500;600&family=JetBrains+Mono:wght@400;600&family=Playfair+Display:wght@600;700&family=Special+Elite&display=swap" rel="stylesheet">
+<!-- Leaflet (open-source, no API key/billing) + OpenStreetMap tiles, for the event-locations map -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <style>
   :root {
     --bg: #f6f1ea;
@@ -475,6 +478,9 @@
   .cardHead { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
   .cardHead h3 { flex: 1; }
   .shareBtn { border: 1px solid var(--border); background: var(--card); border-radius: 8px; padding: 6px 10px; font-size: 13px; cursor: pointer; flex-shrink: 0; white-space: nowrap; }
+  .evMapLink { color: var(--accent); text-decoration: none; font-weight: 600; white-space: nowrap; }
+  .evMapLink:hover { text-decoration: underline; }
+  .leaflet-popup-content-wrapper, .leaflet-popup-tip { background: var(--card); color: var(--ink); }
   .shareOption { display: block; width: 100%; text-align: left; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); font-size: 15px; margin-bottom: 8px; cursor: pointer; text-decoration: none; color: var(--ink); }
   .uploadStatus { font-size: 13px; color: var(--ink-soft); margin-top: 8px; min-height: 16px; }
 
@@ -551,6 +557,11 @@
       <!-- Events -->
       <section class="tabpane" id="pane-events">
         <button class="btn small secondary" id="openDigestBtn" style="margin-bottom:10px; width:auto">📣 Add to This Week's Family Email</button>
+        <button class="btn small secondary" id="toggleEventsMapBtn" style="margin-bottom:10px; margin-left:8px; width:auto">🗺 Show map of events</button>
+        <div id="eventsMapSection" style="display:none; margin-bottom:14px">
+          <div id="eventsMapContainer" style="height:280px; border-radius:var(--radius); overflow:hidden; border:1px solid var(--border)"></div>
+          <div class="hh" id="eventsMapStatus" style="margin-top:6px"></div>
+        </div>
         <div id="eventList"></div>
         <div class="empty" id="eventEmpty" style="display:none">No events yet. Tap + to plan one.</div>
       </section>
@@ -1698,6 +1709,79 @@ function renderEventsList() {
   snap.forEach(d => renderEventCard(d.id, d.data(), list));
 }
 
+// ---------- Event locations map ----------
+// Events only ever store `where` as free text (there's no address-input UI, just a plain text
+// field), so there are no coordinates to plot without a geocoding step. Uses Nominatim
+// (OpenStreetMap's free geocoding search — no API key or billing account needed, unlike Google's
+// Geocoding API) and Leaflet + OSM tiles for the map itself, also free/keyless. Geocoded results
+// are cached only in memory for this session (not written back to Firestore) — writing them back
+// would need loosening the events update rule (currently host/admin-only) just to let any viewer
+// cache a lat/lng, and re-geocoding a handful of events each time someone opens the map is well
+// within Nominatim's usage policy (their limit is 1 request/sec; a family app has a handful of
+// upcoming events at a time, not hundreds) — see the per-event "📍 Map" link on each event card
+// for a zero-geocoding alternative that always works even if a lookup here fails.
+const _eventGeocodeCache = {};
+let _eventsLeafletMap = null, _eventsMapLoaded = false;
+
+async function geocodeAddress(address) {
+  if (_eventGeocodeCache[address] !== undefined) return _eventGeocodeCache[address];
+  try {
+    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(address)}`);
+    const results = await res.json();
+    const hit = results && results[0] ? { lat: +results[0].lat, lng: +results[0].lon } : null;
+    _eventGeocodeCache[address] = hit;
+    return hit;
+  } catch (err) {
+    console.warn('Geocoding failed for', address, err);
+    _eventGeocodeCache[address] = null;
+    return null;
+  }
+}
+
+async function renderEventsMap() {
+  if (!_lastEventsSnap) return;
+  const withLocation = [];
+  _lastEventsSnap.forEach(d => { const e = d.data(); if (e.where && e.where.trim()) withLocation.push({ id: d.id, ...e }); });
+
+  if (!_eventsLeafletMap) {
+    _eventsLeafletMap = L.map('eventsMapContainer').setView([39.8283, -98.5795], 4); // center of the continental US until real pins load
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors', maxZoom: 18
+    }).addTo(_eventsLeafletMap);
+  }
+
+  if (!withLocation.length) { $('eventsMapStatus').textContent = 'No events with a location set yet.'; return; }
+  $('eventsMapStatus').textContent = `Looking up ${withLocation.length} location(s)…`;
+
+  const markers = [];
+  // Sequential, not Promise.all — respects Nominatim's 1 request/sec usage policy rather than
+  // firing every event's lookup at once.
+  for (const ev of withLocation) {
+    const spot = await geocodeAddress(ev.where);
+    if (spot) markers.push(L.marker([spot.lat, spot.lng]).addTo(_eventsLeafletMap).bindPopup(`<b>${escapeHtml(ev.title)}</b><br>${escapeHtml(ev.where)}`));
+  }
+
+  if (markers.length) {
+    _eventsLeafletMap.fitBounds(L.featureGroup(markers).getBounds().pad(0.2));
+    $('eventsMapStatus').textContent = markers.length < withLocation.length
+      ? `Showing ${markers.length} of ${withLocation.length} — some locations couldn't be found on the map.`
+      : '';
+  } else {
+    $('eventsMapStatus').textContent = "Couldn't find any of these locations on the map.";
+  }
+}
+
+$('toggleEventsMapBtn').onclick = async () => {
+  const showing = $('eventsMapSection').style.display !== 'none';
+  if (showing) { $('eventsMapSection').style.display = 'none'; $('toggleEventsMapBtn').textContent = '🗺 Show map of events'; return; }
+  $('eventsMapSection').style.display = 'block';
+  $('toggleEventsMapBtn').textContent = '🗺 Hide map of events';
+  // Leaflet can't size itself correctly inside a container that was display:none when the map
+  // was created, so (re-)invalidate its size now that the container is actually visible.
+  await renderEventsMap();
+  if (_eventsLeafletMap) setTimeout(() => _eventsLeafletMap.invalidateSize(), 50);
+};
+
 function renderEventCard(id, ev, container) {
   const card = document.createElement('div');
   card.className = 'card eventCard';
@@ -1705,7 +1789,7 @@ function renderEventCard(id, ev, container) {
   const myResponderHouseholds = myHouseholds.filter(h => h.responderId === currentUser.uid);
   card.innerHTML = `
     <div class="cardHead"><h3>${escapeHtml(ev.title)}</h3><button class="shareBtn evShareBtn">🔗 Share</button></div>
-    <div class="when">${whenStr}${ev.where ? ' · ' + escapeHtml(ev.where) : ''}</div>
+    <div class="when">${whenStr}${ev.where ? ' · ' + escapeHtml(ev.where) + ` <a href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(ev.where)}" target="_blank" rel="noopener" class="evMapLink">📍 Map</a>` : ''}</div>
     <div class="when">Hosted by ${escapeHtml(ev.hostName || '')}</div>
     <div class="when">Invited: ${escapeHtml(describeAudience(ev))}</div>
     <div class="rsvpLabel">Your RSVP</div>
