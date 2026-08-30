@@ -241,6 +241,16 @@ service cloud.firestore {
       }
     }
 
+    match /recipes/{recipeId} {
+      // Family recipe box — same author/admin-only shape as posts, but WITH an update rule
+      // (unlike storyAnswers): a recipe is meant to be refined over time (fixing a typo, adding a
+      // missed ingredient), not a one-time capture like a story answer.
+      allow read: if isApprovedMember();
+      allow create: if isApprovedMember() && request.resource.data.authorId == request.auth.uid;
+      allow update: if isAdmin() || (signedIn() && resource.data.authorId == request.auth.uid);
+      allow delete: if isAdmin() || (signedIn() && resource.data.authorId == request.auth.uid);
+    }
+
     match /storyAnswers/{answerId} {
       // Weekly story-prompt answers (text and/or a recorded voice clip) — same
       // author/admin-only write shape as posts/comments above. No update rule: an answer is

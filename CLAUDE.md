@@ -1094,6 +1094,12 @@ app this size; the PWA install (real manifest + icon, see "PWA install" above) c
   archive were actually proven working. Needs a real person to tap "🎤 Record a voice answer" on
   an actual phone/browser, grant the mic permission prompt, and confirm the recording uploads and
   plays back correctly — same shape of gap as the push-notification real-device item above.
+- **Map for event locations — requested, not started.** Ryan asked for a family map showing event
+  locations (a natural extension of the "family map — where everyone lives" idea from the
+  features brainstorm, applied to Events specifically instead). Not scoped or built yet; next step
+  is deciding how it's shown (a map view per event using its `where` field, and/or an aggregate
+  map of all upcoming events) and whether it needs a geocoding step (events currently store
+  `where` as free-text, not coordinates).
 
 **2026-08-29/30 session — chaos testing + three "make the app worth opening unprompted"
 features:** Ran three rounds of adversarial (chaos) testing directly against `firestore.rules`
@@ -1116,8 +1122,13 @@ the **Birthday Spotlight** (a scheduled Cloud Function that auto-posts a Wall ca
 of any birthday/anniversary in the Calendar, skipping deceased/memorial entries), and **Story
 Prompts** (a new "📖 Stories" tab with a weekly rotating family-history question, answerable by
 text or a recorded voice clip, archived permanently — see the open item above for what's still
-unverified there). Also set up a GitHub remote (`github.com/oldfortytwo-dev/House-of-Martin`,
-private) for this repo, which hadn't had one before.
+unverified there). Followed by a fourth feature, the **Recipe Box** (a shared family recipe
+collection — title, optional photo, ingredients, instructions, an optional "why this recipe
+matters" story note — folded into the Wall tab as a "🍲 Show recipe box" toggle section rather
+than an 8th bottom-nav tab, mirroring the existing Albums pattern; author/admin can edit or delete,
+unlike Story Prompts' one-time-capture answers). Also set up a GitHub remote
+(`github.com/oldfortytwo-dev/House-of-Martin`, private) for this repo, which hadn't had one
+before.
 
 ## Working Style / Preferences
 

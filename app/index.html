@@ -659,7 +659,51 @@
           <div class="albumGrid" id="albumGrid"></div>
           <div class="empty" id="albumEmpty" style="display:none">No albums yet. Tap + to start one.</div>
         </div>
+
+        <div style="margin:10px 0 8px; text-align:center">
+          <button class="btn small secondary" id="toggleRecipesBtn">🍲 Show recipe box</button>
+        </div>
+        <div id="recipesSection" style="display:none">
+          <button class="btn small secondary" id="openRecipeComposerBtn" style="margin-bottom:10px; width:auto">🍲 Add a Recipe</button>
+          <div class="albumGrid" id="recipeGrid"></div>
+          <div class="empty" id="recipeEmpty" style="display:none">No recipes yet. Add the first family favorite!</div>
+        </div>
       </section>
+
+      <!-- Recipe detail modal -->
+      <div class="modalBg" id="recipeDetailModalBg">
+        <div class="modalSheet">
+          <div id="recipeDetailBody"></div>
+          <button class="btn secondary" id="recipeDetailCloseBtn" style="margin-top:14px">Close</button>
+        </div>
+      </div>
+
+      <!-- Add/Edit Recipe composer modal -->
+      <div class="modalBg" id="recipeComposerModalBg">
+        <div class="modalSheet">
+          <div class="card">
+            <h3 style="margin-top:0" id="recipeComposerHeading">🍲 Add a Recipe</h3>
+            <div class="field"><label>Title</label><input type="text" id="recipeTitle" placeholder="Grandma's Apple Pie"></div>
+            <div style="display:flex; gap:8px; margin-top:4px; align-items:center; flex-wrap:wrap">
+              <input type="file" id="recipePhotoInput" accept="image/*" style="display:none">
+              <button class="btn small secondary" id="recipeAddPhotoBtn">📷 Add photo</button>
+              <span class="hh" id="recipePhotoPreviewName"></span>
+            </div>
+            <div class="field" style="margin-top:10px"><label>Ingredients</label>
+              <textarea id="recipeIngredients" class="bulkPaste" rows="4" placeholder="One per line works great"></textarea>
+            </div>
+            <div class="field" style="margin-top:10px"><label>Instructions</label>
+              <textarea id="recipeInstructions" class="bulkPaste" rows="5" placeholder="Step by step"></textarea>
+            </div>
+            <div class="field" style="margin-top:10px"><label>Why this recipe? (optional)</label>
+              <textarea id="recipeStory" class="bulkPaste" rows="2" placeholder="The story or memory behind it"></textarea>
+            </div>
+            <button class="btn small" id="recipeSaveBtn" style="margin-top:10px">Save Recipe</button>
+            <div class="uploadStatus" id="recipeSaveStatus"></div>
+          </div>
+          <button class="btn secondary" id="recipeComposerCloseBtn" style="margin-top:14px">Close</button>
+        </div>
+      </div>
 
       <!-- Wall post composer modal -->
       <div class="modalBg" id="wallComposerModalBg">
@@ -1216,7 +1260,7 @@ let pendingCount = 0, eventsCount = 0, albumsCount = 0;
 let unsubMsgs = null, unsubEvents = null, unsubAlbums = null, unsubContacts = null, unsubPending = null,
     unsubInvites = null, unsubHouseholds = null, unsubBranches = null, unsubPhotos = null, unsubOccasions = null,
     unsubDMs = null, unsubDigest = null, unsubAppearance = null, unsubWall = null, unsubNotifs = null,
-    unsubFamilyContacts = null, unsubStoryAnswers = null;
+    unsubFamilyContacts = null, unsubStoryAnswers = null, unsubRecipes = null;
 let _openAlbumId = null;
 let _wallPhotoFile = null;
 
@@ -1315,6 +1359,7 @@ onAuthStateChanged(auth, (user) => {
     initAlbums();
     initWall();
     initStories();
+    initRecipes();
     initContacts();
     initOccasions();
     initDMs();
@@ -1330,8 +1375,8 @@ function show(id) {
 }
 
 function cleanupListeners() {
-  [unsubMsgs, unsubEvents, unsubAlbums, unsubContacts, unsubPending, unsubInvites, unsubHouseholds, unsubBranches, unsubPhotos, unsubOccasions, unsubDMs, unsubDigest, unsubAppearance, unsubWall, unsubNotifs, unsubFamilyContacts, unsubStoryAnswers].forEach(u => u && u());
-  unsubMsgs = unsubEvents = unsubAlbums = unsubContacts = unsubPending = unsubInvites = unsubHouseholds = unsubBranches = unsubPhotos = unsubOccasions = unsubDMs = unsubDigest = unsubAppearance = unsubWall = unsubNotifs = unsubFamilyContacts = unsubStoryAnswers = null;
+  [unsubMsgs, unsubEvents, unsubAlbums, unsubContacts, unsubPending, unsubInvites, unsubHouseholds, unsubBranches, unsubPhotos, unsubOccasions, unsubDMs, unsubDigest, unsubAppearance, unsubWall, unsubNotifs, unsubFamilyContacts, unsubStoryAnswers, unsubRecipes].forEach(u => u && u());
+  unsubMsgs = unsubEvents = unsubAlbums = unsubContacts = unsubPending = unsubInvites = unsubHouseholds = unsubBranches = unsubPhotos = unsubOccasions = unsubDMs = unsubDigest = unsubAppearance = unsubWall = unsubNotifs = unsubFamilyContacts = unsubStoryAnswers = unsubRecipes = null;
 }
 
 // ---------- Tab nav ----------
@@ -2574,6 +2619,147 @@ $('toggleAlbumsBtn').onclick = () => {
   const showing = $('albumsSection').style.display !== 'none';
   $('albumsSection').style.display = showing ? 'none' : 'block';
   $('toggleAlbumsBtn').textContent = showing ? '📁 Show organized albums' : '📁 Hide organized albums';
+};
+
+// ---------- Recipe Box ----------
+// A shared family recipe collection, folded into the Wall tab as a toggle-able section rather
+// than its own bottom-nav tab — the nav bar is already tight at 7 buttons for an admin (Messages,
+// Events, Contacts, Calendar, Wall, Stories, Admin), and this mirrors the exact pattern already
+// used for Albums (a second content type living under Wall, shown on demand) rather than
+// introducing an 8th tab for a feature that doesn't need to be front-and-center every visit.
+let recipesById = {};
+let _recipePhotoFile = null, _editingRecipeId = null;
+
+function initRecipes() {
+  const q = query(collection(db, 'recipes'), orderBy('title', 'asc'));
+  unsubRecipes = onSnapshot(q, (snap) => {
+    recipesById = {};
+    const grid = $('recipeGrid');
+    grid.innerHTML = '';
+    $('recipeEmpty').style.display = snap.empty ? 'block' : 'none';
+    snap.forEach(d => {
+      const r = { id: d.id, ...d.data() };
+      recipesById[r.id] = r;
+      const tile = document.createElement('div');
+      tile.className = 'albumTile';
+      tile.innerHTML = r.photoUrl
+        ? `<div class="thumb" style="background-image:url(${r.photoUrl})"></div><div class="lbl">${escapeHtml(r.title)}</div>`
+        : `<div class="thumb">🍲</div><div class="lbl">${escapeHtml(r.title)}</div>`;
+      tile.onclick = () => openRecipeDetail(r.id);
+      grid.appendChild(tile);
+    });
+  });
+}
+
+function openRecipeDetail(id) {
+  const r = recipesById[id];
+  if (!r) return;
+  const canEdit = r.authorId === currentUser.uid || (myDoc && myDoc.role === 'admin');
+  $('recipeDetailBody').innerHTML = `
+    <h3 style="margin-top:0">🍲 ${escapeHtml(r.title)}</h3>
+    <div class="hh">Added by ${escapeHtml(r.authorName || '')}</div>
+    ${r.photoUrl ? `<img src="${r.photoUrl}" alt="" style="max-width:100%; border-radius:8px; margin:10px 0">` : ''}
+    ${r.story ? `<div style="font-style:italic; margin:10px 0">${escapeHtml(r.story)}</div>` : ''}
+    <div style="margin-top:10px"><b>Ingredients</b><div style="white-space:pre-wrap; margin-top:4px">${escapeHtml(r.ingredients || '')}</div></div>
+    <div style="margin-top:10px"><b>Instructions</b><div style="white-space:pre-wrap; margin-top:4px">${escapeHtml(r.instructions || '')}</div></div>
+    ${canEdit ? `
+      <div style="display:flex; gap:8px; margin-top:14px">
+        <button class="btn small secondary" id="recipeEditBtn">✎ Edit</button>
+        <button class="btn small secondary" id="recipeDeleteBtn">✕ Delete</button>
+      </div>` : ''}
+  `;
+  if (canEdit) {
+    $('recipeEditBtn').onclick = () => { $('recipeDetailModalBg').classList.remove('open'); openRecipeComposer(id); };
+    $('recipeDeleteBtn').onclick = async () => {
+      if (!confirm(`Delete "${r.title}"? This can't be undone.`)) return;
+      await deleteDoc(doc(db, 'recipes', id));
+      if (r.photoStoragePath) { try { await deleteObject(ref(storage, r.photoStoragePath)); } catch (err) { console.warn('Storage delete failed', err); } }
+      $('recipeDetailModalBg').classList.remove('open');
+    };
+  }
+  $('recipeDetailModalBg').classList.add('open');
+}
+$('recipeDetailCloseBtn').onclick = () => $('recipeDetailModalBg').classList.remove('open');
+
+function openRecipeComposer(editId) {
+  _editingRecipeId = editId || null;
+  _recipePhotoFile = null;
+  $('recipePhotoPreviewName').textContent = '';
+  $('recipeSaveStatus').textContent = '';
+  if (editId) {
+    const r = recipesById[editId];
+    $('recipeComposerHeading').textContent = '✎ Edit Recipe';
+    $('recipeTitle').value = r.title || '';
+    $('recipeIngredients').value = r.ingredients || '';
+    $('recipeInstructions').value = r.instructions || '';
+    $('recipeStory').value = r.story || '';
+  } else {
+    $('recipeComposerHeading').textContent = '🍲 Add a Recipe';
+    $('recipeTitle').value = '';
+    $('recipeIngredients').value = '';
+    $('recipeInstructions').value = '';
+    $('recipeStory').value = '';
+  }
+  $('recipeComposerModalBg').classList.add('open');
+}
+$('openRecipeComposerBtn').onclick = () => openRecipeComposer(null);
+$('recipeComposerCloseBtn').onclick = () => $('recipeComposerModalBg').classList.remove('open');
+$('recipeAddPhotoBtn').onclick = () => $('recipePhotoInput').click();
+$('recipePhotoInput').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  _recipePhotoFile = file;
+  $('recipePhotoPreviewName').textContent = file.name;
+});
+
+$('recipeSaveBtn').onclick = async () => {
+  const title = $('recipeTitle').value.trim();
+  if (!title) { $('recipeSaveStatus').textContent = 'Give the recipe a title first.'; return; }
+  $('recipeSaveStatus').textContent = _recipePhotoFile ? 'Saving (uploading photo)…' : 'Saving…';
+  try {
+    const payload = {
+      title, ingredients: $('recipeIngredients').value.trim(), instructions: $('recipeInstructions').value.trim(),
+      story: $('recipeStory').value.trim() || null,
+    };
+    if (_editingRecipeId) {
+      const existing = recipesById[_editingRecipeId];
+      if (_recipePhotoFile) {
+        const path = `recipePhotos/${_editingRecipeId}_${_recipePhotoFile.name}`;
+        const sRef = ref(storage, path);
+        await uploadBytes(sRef, _recipePhotoFile, { customMetadata: { uploaderId: currentUser.uid } });
+        payload.photoUrl = await getDownloadURL(sRef);
+        payload.photoStoragePath = path;
+        if (existing && existing.photoStoragePath && existing.photoStoragePath !== path) {
+          try { await deleteObject(ref(storage, existing.photoStoragePath)); } catch (err) { console.warn('Storage delete failed', err); }
+        }
+      }
+      await updateDoc(doc(db, 'recipes', _editingRecipeId), payload);
+    } else {
+      const recipeRef = doc(collection(db, 'recipes'));
+      payload.authorId = currentUser.uid;
+      payload.authorName = myDoc.name;
+      payload.createdAt = serverTimestamp();
+      payload.photoUrl = null;
+      payload.photoStoragePath = null;
+      if (_recipePhotoFile) {
+        const path = `recipePhotos/${recipeRef.id}_${_recipePhotoFile.name}`;
+        const sRef = ref(storage, path);
+        await uploadBytes(sRef, _recipePhotoFile, { customMetadata: { uploaderId: currentUser.uid } });
+        payload.photoUrl = await getDownloadURL(sRef);
+        payload.photoStoragePath = path;
+      }
+      await setDoc(recipeRef, payload);
+    }
+    $('recipeComposerModalBg').classList.remove('open');
+  } catch (err) {
+    $('recipeSaveStatus').textContent = 'Could not save: ' + (err.message || err);
+  }
+};
+
+$('toggleRecipesBtn').onclick = () => {
+  const showing = $('recipesSection').style.display !== 'none';
+  $('recipesSection').style.display = showing ? 'none' : 'block';
+  $('toggleRecipesBtn').textContent = showing ? '🍲 Show recipe box' : '🍲 Hide recipe box';
 };
 
 // ---------- Wall (post text + photo directly, no album required) ----------
