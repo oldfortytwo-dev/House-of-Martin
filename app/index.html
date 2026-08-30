@@ -1414,22 +1414,34 @@ function initDMs() {
   });
 }
 
+let _lastMsgSnap = null;
+// Same race as Events/Wall's describeAudience(): sender photos come from usersById (a separate
+// listener, initContacts), but this only re-renders on new messages — a channel opened before
+// usersById finishes loading would show initials-only avatars for every existing message until
+// someone sends a new one. Called from initContacts' listener too, once it updates.
+function rerenderMessages() { if (_lastMsgSnap) renderMessages(_lastMsgSnap); }
+
+function renderMessages(snap) {
+  const list = $('msgList');
+  list.innerHTML = '';
+  $('msgEmpty').style.display = snap.empty ? 'block' : 'none';
+  snap.forEach(d => {
+    const m = d.data();
+    const div = document.createElement('div');
+    div.className = 'msg' + (m.senderId === currentUser.uid ? ' mine' : '');
+    const senderPhoto = usersById[m.senderId] && usersById[m.senderId].photoUrl;
+    div.innerHTML = `<div class="who profileLink" data-uid="${m.senderId}" style="cursor:pointer">${avatarHtml(m.senderName, senderPhoto, 16)} ${escapeHtml(m.senderName || '')}</div>${escapeHtml(m.text || '')}`;
+    list.appendChild(div);
+  });
+  list.scrollIntoView({ block: 'end' });
+}
+
 function loadMessages() {
   if (unsubMsgs) unsubMsgs();
   const q = query(collection(db, 'channels', activeChannelId, 'messages'), orderBy('createdAt', 'asc'));
   unsubMsgs = onSnapshot(q, (snap) => {
-    const list = $('msgList');
-    list.innerHTML = '';
-    $('msgEmpty').style.display = snap.empty ? 'block' : 'none';
-    snap.forEach(d => {
-      const m = d.data();
-      const div = document.createElement('div');
-      div.className = 'msg' + (m.senderId === currentUser.uid ? ' mine' : '');
-      const senderPhoto = usersById[m.senderId] && usersById[m.senderId].photoUrl;
-      div.innerHTML = `<div class="who profileLink" data-uid="${m.senderId}" style="cursor:pointer">${avatarHtml(m.senderName, senderPhoto, 16)} ${escapeHtml(m.senderName || '')}</div>${escapeHtml(m.text || '')}`;
-      list.appendChild(div);
-    });
-    list.scrollIntoView({ block: 'end' });
+    _lastMsgSnap = snap;
+    renderMessages(snap);
   });
 }
 
@@ -1769,6 +1781,7 @@ function initContacts() {
     populateWallAudiencePickers();
     renderEventsList(); // describeAudience() reads usersById for named-individual invites — same race as the households case above
     rerenderWallFeed(); // same race — describeAudience() on Wall posts also reads usersById
+    rerenderMessages(); // same race — sender photos in the open channel also read usersById
     if (myDoc.role === 'admin') { renderHouseholdsAdmin(); renderStaffList(); renderDashboard(); }
   });
 }
@@ -3085,7 +3098,13 @@ function initHouseholds() {
     populateWallAudiencePickers();
     renderEventsList(); // re-render in case events' onSnapshot won this race and rendered before myHouseholds was ready
     rerenderWallFeed(); // same race — describeAudience() on Wall posts also reads householdsById
-    if (myDoc.role === 'admin') { renderHouseholdsAdmin(); renderDashboard(); }
+    if (myDoc.role === 'admin') {
+      renderHouseholdsAdmin(); renderDashboard();
+      // renderBranchesAdmin() lists every household as a checkbox under each branch — same race:
+      // if branches loaded first, that admin's only call to renderBranchesAdmin() already ran
+      // with an empty households[], and nothing re-ran it once households caught up.
+      renderBranchesAdmin();
+    }
   });
 }
 
