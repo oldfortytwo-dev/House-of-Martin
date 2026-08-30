@@ -644,6 +644,10 @@
 
       <!-- Wall -->
       <section class="tabpane" id="pane-photos">
+        <div class="card" id="onThisDayCard" style="display:none; margin-bottom:14px">
+          <h3 style="margin-top:0">📸 On This Day</h3>
+          <div id="onThisDayList"></div>
+        </div>
         <button class="btn small secondary" id="openWallComposerBtn" style="margin-bottom:10px; width:auto">🧱 Post to the Family Wall</button>
         <div id="wallFeed"></div>
         <div class="empty" id="wallEmpty" style="display:none">Nothing on the wall yet — be the first to post!</div>
@@ -1783,6 +1787,7 @@ function initContacts() {
     rerenderWallFeed(); // same race — describeAudience() on Wall posts also reads usersById
     rerenderMessages(); // same race — sender photos in the open channel also read usersById
     rerenderNotifications(); // same race — notifRowHtml() actor photos also read usersById
+    rerenderOnThisDay(); // same race — On This Day author photos also read usersById
     if (myDoc.role === 'admin') { renderHouseholdsAdmin(); renderStaffList(); renderDashboard(); }
   });
 }
@@ -2564,6 +2569,68 @@ function initWall() {
     _lastWallSnap = snap;
     renderWallFeed(snap);
   });
+  loadOnThisDay();
+}
+
+// "On This Day" — surfaces posts from the same month/day in past years, e.g. Facebook Memories.
+// Deliberately NOT built on the live `posts` listener above: that one is capped at the 50 most
+// recent posts for the Wall's own operational needs, so a memory from 2+ years ago would almost
+// certainly already have scrolled out of it. This does its own one-time, uncapped fetch instead —
+// same reasoning as fetchOrdersFromFirestore() in the sibling POS codebase's reporting fix: a
+// listener sized for "what's on screen right now" is the wrong data source for "everything that
+// ever happened on this date." Runs once per Wall tab load, not live — a memory doesn't need to
+// update in real time the way today's posts do.
+let _lastOnThisDayMatches = null;
+// Re-renders from the cached matches (not a refetch) using current usersById — same race as
+// Events/Wall/DMs/notifications: author photos come from usersById, which loads on its own
+// separate listener. A full posts refetch on every contacts update would be wasteful for what's
+// really just a photo lookup, so this only re-runs the render step.
+function rerenderOnThisDay() { if (_lastOnThisDayMatches) renderOnThisDay(_lastOnThisDayMatches); }
+
+async function loadOnThisDay() {
+  const today = new Date();
+  const todayMonth = today.getMonth(), todayDate = today.getDate(), thisYear = today.getFullYear();
+  let snap;
+  try {
+    // Capped at 3000 as a sanity backstop, not a real limit at this app's family-sized scale —
+    // if this codebase is ever reused somewhere with genuinely large post volume, this should
+    // become a per-year range query instead of one flat fetch.
+    snap = await getDocs(query(collection(db, 'posts'), orderBy('createdAt', 'desc'), limit(3000)));
+  } catch (err) { console.warn('On This Day: could not load posts', err); return; }
+
+  const matches = [];
+  snap.forEach(d => {
+    const p = d.data();
+    if (!p.createdAt || !p.createdAt.toDate) return;
+    const created = p.createdAt.toDate();
+    if (created.getMonth() === todayMonth && created.getDate() === todayDate && created.getFullYear() !== thisYear) {
+      matches.push({ id: d.id, ...p, _year: created.getFullYear(), yearsAgo: thisYear - created.getFullYear() });
+    }
+  });
+
+  matches.sort((a, b) => b._year - a._year);
+  _lastOnThisDayMatches = matches;
+  renderOnThisDay(matches);
+}
+
+function renderOnThisDay(matches) {
+  const card = $('onThisDayCard');
+  if (!matches.length) { card.style.display = 'none'; return; }
+  card.style.display = 'block';
+  $('onThisDayList').innerHTML = matches.map(p => {
+    const yearsAgo = p.yearsAgo;
+    const who = usersById[p.authorId];
+    const photo = who && who.photoUrl;
+    return `
+      <div class="onThisDayItem" style="display:flex; gap:10px; padding:8px 0; border-bottom:1px solid var(--border)">
+        <span class="profileLink" data-uid="${p.authorId}">${avatarHtml(p.authorName, photo, 32)}</span>
+        <div style="flex:1; min-width:0">
+          <div class="nm">${escapeHtml(p.authorName || '')} <span class="hh">— ${yearsAgo} year${yearsAgo === 1 ? '' : 's'} ago</span></div>
+          ${p.text ? `<div style="font-size:14px; margin-top:2px">${escapeHtml(p.text)}</div>` : ''}
+          ${p.photoUrl ? `<img src="${p.photoUrl}" alt="" style="max-width:100%; max-height:220px; border-radius:8px; margin-top:6px; cursor:pointer" onclick="window.open('${p.photoUrl}','_blank')">` : ''}
+        </div>
+      </div>`;
+  }).join('');
 }
 
 function renderWallFeed(snap) {
