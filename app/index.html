@@ -451,6 +451,8 @@
     padding: 10px 12px; margin-top: 12px;
   }
   .rsvpLabel { font-size: 12px; font-weight: 600; color: var(--ink-soft); margin-top: 10px; margin-bottom: 2px; }
+  .pastEventCard { opacity: .72; }
+  .pastBadge { font-size: 10px; background: var(--border); color: var(--ink-soft); padding: 2px 7px; border-radius: 8px; font-weight: 700; letter-spacing: .3px; text-transform: uppercase; vertical-align: middle; margin-right: 2px; }
   .noAccountBadge { font-size: 10px; background: var(--border); color: var(--ink-soft); padding: 2px 6px; border-radius: 8px; margin-left: 6px; font-weight: 600; vertical-align: middle; }
   .ecSection { margin-top: 14px; padding-top: 10px; border-top: 1px dashed var(--border); }
   code { background: var(--accent-soft); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
@@ -565,6 +567,13 @@
         </div>
         <div id="eventList"></div>
         <div class="empty" id="eventEmpty" style="display:none">No events yet. Tap + to plan one.</div>
+
+        <div style="margin:18px 0 8px; text-align:center">
+          <button class="btn small secondary" id="togglePastEventsBtn" style="display:none">🗄 Show past events</button>
+        </div>
+        <div id="pastEventsSection" style="display:none">
+          <div id="pastEventList"></div>
+        </div>
       </section>
 
       <!-- Weekly digest submission modal -->
@@ -1731,16 +1740,51 @@ function initEvents() {
 // household RSVP block would otherwise silently never appear even after myHouseholds is ready,
 // since nothing here re-runs unless the events collection itself changes. Re-rendering from the
 // households side too closes that race.
+// Splits events into upcoming vs. past — previously everything rendered in one flat list,
+// ordered by createdAt (when the event doc was CREATED, not the event's actual date), so a
+// gathering from a month ago stayed sitting at the top of the list forever with live RSVP
+// buttons and an open "who's bringing what" signup form, exactly as if it were still upcoming.
+// A date-TBD event (ev.when is null — the "when" field is optional at creation) can't be
+// compared to now, so it's always treated as upcoming and sorted after every dated upcoming
+// event, since it still needs a date set rather than being something that already happened.
 function renderEventsList() {
   if (!_lastEventsSnap) return;
   const snap = _lastEventsSnap;
   _eventCardUnsubs.forEach(unsub => unsub());
   _eventCardUnsubs = [];
+
+  const now = Date.now();
+  const upcoming = [], past = [];
+  snap.forEach(d => {
+    const ev = d.data();
+    if (ev.when && new Date(ev.when).getTime() < now) past.push({ id: d.id, ev });
+    else upcoming.push({ id: d.id, ev });
+  });
+  upcoming.sort((a, b) => {
+    if (!a.ev.when) return 1; // TBD sorts after every dated upcoming event
+    if (!b.ev.when) return -1;
+    return new Date(a.ev.when) - new Date(b.ev.when); // soonest first
+  });
+  past.sort((a, b) => new Date(b.ev.when) - new Date(a.ev.when)); // most recent past first
+
   const list = $('eventList');
   list.innerHTML = '';
   $('eventEmpty').style.display = snap.empty ? 'block' : 'none';
-  snap.forEach(d => renderEventCard(d.id, d.data(), list));
+  upcoming.forEach(({ id, ev }) => renderEventCard(id, ev, list, false));
+
+  const pastBtn = $('togglePastEventsBtn');
+  const pastList = $('pastEventList');
+  pastBtn.style.display = past.length ? 'inline-block' : 'none';
+  const wasShowing = $('pastEventsSection').style.display !== 'none';
+  pastBtn.textContent = `🗄 ${wasShowing ? 'Hide' : 'Show'} past events (${past.length})`;
+  pastList.innerHTML = '';
+  past.forEach(({ id, ev }) => renderEventCard(id, ev, pastList, true));
 }
+$('togglePastEventsBtn').onclick = () => {
+  const showing = $('pastEventsSection').style.display !== 'none';
+  $('pastEventsSection').style.display = showing ? 'none' : 'block';
+  renderEventsList(); // just to refresh the button's Show/Hide + count label
+};
 
 // ---------- Event locations map ----------
 // Events only ever store `where` as free text (there's no address-input UI, just a plain text
@@ -1815,16 +1859,17 @@ $('toggleEventsMapBtn').onclick = async () => {
   if (_eventsLeafletMap) setTimeout(() => _eventsLeafletMap.invalidateSize(), 50);
 };
 
-function renderEventCard(id, ev, container) {
+function renderEventCard(id, ev, container, isPast) {
   const card = document.createElement('div');
-  card.className = 'card eventCard';
+  card.className = 'card eventCard' + (isPast ? ' pastEventCard' : '');
   const whenStr = ev.when ? new Date(ev.when).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : 'Date TBD';
   const myResponderHouseholds = myHouseholds.filter(h => h.responderId === currentUser.uid);
   card.innerHTML = `
-    <div class="cardHead"><h3>${escapeHtml(ev.title)}</h3><button class="shareBtn evShareBtn">🔗 Share</button></div>
+    <div class="cardHead"><h3>${isPast ? '<span class="pastBadge">Past</span> ' : ''}${escapeHtml(ev.title)}</h3><button class="shareBtn evShareBtn">🔗 Share</button></div>
     <div class="when">${whenStr}${ev.where ? ' · ' + escapeHtml(ev.where) + ` <a href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(ev.where)}" target="_blank" rel="noopener" class="evMapLink">📍 Map</a>` : ''}</div>
     <div class="when">Hosted by ${escapeHtml(ev.hostName || '')}</div>
     <div class="when">Invited: ${escapeHtml(describeAudience(ev))}</div>
+    ${isPast ? '' : `
     <div class="rsvpLabel">Your RSVP</div>
     <div class="rsvpRow rsvpMine" data-eid="${id}">
       <button data-status="yes">✅ Yes</button>
@@ -1839,17 +1884,18 @@ function renderEventCard(id, ev, container) {
         <button data-status="maybe">🤔 Maybe</button>
         <button data-status="no">❌ Can't make it</button>
       </div>
-    </div>`).join('')}
+    </div>`).join('')}`}
     <div class="rsvpCount" id="rc-${id}"></div>
 
     <div class="ecSection">
-      <div class="nm" style="font-size:13px">🍽 Who's bringing what</div>
+      <div class="nm" style="font-size:13px">🍽 ${isPast ? 'Who brought what' : "Who's bringing what"}</div>
       <div id="signups-${id}" style="margin-top:6px"></div>
+      ${isPast ? '' : `
       <div style="display:flex; gap:6px; margin-top:8px; flex-wrap:wrap">
         <input type="text" class="signupItemInput" placeholder="e.g. Potato salad" style="flex:1; min-width:120px; padding:9px 12px; border:1px solid var(--border); border-radius:8px">
         <label class="chk" style="flex-shrink:0"><input type="checkbox" class="signupClaimSelf" checked> I'll bring this</label>
         <button class="btn small secondary signupAddBtn" style="width:auto">Add</button>
-      </div>
+      </div>`}
     </div>
   `;
   container.appendChild(card);
@@ -1897,19 +1943,21 @@ function renderEventCard(id, ev, container) {
     }
   }));
 
-  card.querySelector('.signupAddBtn').onclick = async () => {
-    const input = card.querySelector('.signupItemInput');
-    const item = input.value.trim();
-    if (!item) return;
-    const claimSelf = card.querySelector('.signupClaimSelf').checked;
-    await addDoc(collection(db, 'events', id, 'signups'), {
-      item, addedBy: currentUser.uid, addedByName: myDoc.name,
-      claimedBy: claimSelf ? currentUser.uid : null, claimedByName: claimSelf ? myDoc.name : null,
-      createdAt: serverTimestamp()
-    });
-    input.value = '';
-  };
-  card.querySelector('.signupItemInput').addEventListener('keydown', e => { if (e.key === 'Enter') card.querySelector('.signupAddBtn').click(); });
+  if (!isPast) {
+    card.querySelector('.signupAddBtn').onclick = async () => {
+      const input = card.querySelector('.signupItemInput');
+      const item = input.value.trim();
+      if (!item) return;
+      const claimSelf = card.querySelector('.signupClaimSelf').checked;
+      await addDoc(collection(db, 'events', id, 'signups'), {
+        item, addedBy: currentUser.uid, addedByName: myDoc.name,
+        claimedBy: claimSelf ? currentUser.uid : null, claimedByName: claimSelf ? myDoc.name : null,
+        createdAt: serverTimestamp()
+      });
+      input.value = '';
+    };
+    card.querySelector('.signupItemInput').addEventListener('keydown', e => { if (e.key === 'Enter') card.querySelector('.signupAddBtn').click(); });
+  }
 
   _eventCardUnsubs.push(onSnapshot(query(collection(db, 'events', id, 'signups'), orderBy('createdAt', 'asc')), (snap) => {
     const wrap = card.querySelector(`#signups-${id}`);
@@ -1918,13 +1966,13 @@ function renderEventCard(id, ev, container) {
     wrap.innerHTML = snap.docs.map(d => {
       const s = d.data();
       const mine = s.claimedBy === currentUser.uid;
-      const canDelete = mine || s.addedBy === currentUser.uid || myDoc.role === 'admin';
+      const canDelete = !isPast && (mine || s.addedBy === currentUser.uid || myDoc.role === 'admin');
       return `
       <div class="contactRow">
         <div class="nm">${escapeHtml(s.item)} ${s.claimedBy ? `<span class="hh">— ${escapeHtml(s.claimedByName || '')}</span>` : '<span class="hh">(unclaimed)</span>'}</div>
         <div style="display:flex; gap:4px; align-items:center">
-          ${!s.claimedBy ? `<button class="btn small secondary signupClaim" data-id="${d.id}" style="width:auto">Claim</button>` : ''}
-          ${mine ? `<button class="btn small secondary signupUnclaim" data-id="${d.id}" style="width:auto">Unclaim</button>` : ''}
+          ${!isPast && !s.claimedBy ? `<button class="btn small secondary signupClaim" data-id="${d.id}" style="width:auto">Claim</button>` : ''}
+          ${!isPast && mine ? `<button class="btn small secondary signupUnclaim" data-id="${d.id}" style="width:auto">Unclaim</button>` : ''}
           ${canDelete ? `<button class="editBtn signupDel" data-id="${d.id}">✕</button>` : ''}
         </div>
       </div>`;
