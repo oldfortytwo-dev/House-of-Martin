@@ -4231,8 +4231,8 @@ function renderDashboard() {
     { label: 'Firestore reads/writes/storage', note: 'well under free tier at this scale', amt: '$0.00' },
     { label: `Cloud Storage (~${Math.round(storageEstimateMB)}MB of photos, est.)`, note: '5GB free', amt: '$0.00' },
     { label: 'Cloud Functions (digest email, ~4 runs/mo)', note: '2M invocations free/mo', amt: '$0.00' },
-    { label: 'Cloud Scheduler (weekly digest trigger)', note: 'first 3 jobs free', amt: '$0.00' },
-    { label: 'Secret Manager (2 secrets)', note: '6 secret-versions free/mo', amt: '$0.00' },
+    { label: 'Cloud Scheduler (weekly digest + daily birthday spotlight triggers)', note: 'first 3 jobs free', amt: '$0.00' },
+    { label: 'Secret Manager (3 secrets)', note: '6 secret-versions free/mo', amt: '$0.00' },
     { label: 'Hosting bandwidth', note: '10GB/mo free', amt: '$0.00' },
     { label: 'Gmail SMTP (digest delivery)', note: 'no per-email cost, ~500/day cap', amt: '$0.00' },
   ];
