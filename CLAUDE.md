@@ -1178,12 +1178,18 @@ Fixed to always compare birth years when both sides have one, even with just one
 Verified by seeding exactly that father/son collision and confirming the 2007-born son's real
 account linked to the son's GEDCOM record, not the 1974-born father's.
 
-**Not yet done: the real production import.** The parser/importer (`import_gedcom.js`, defaults to
-a dry run that only reports what it would do; `--apply` commits) has only been run against the
-local emulator with synthetic test data so far — the collections, rules, and tab are deployed, but
-`ancestryPeople`/`ancestryFamilies` are still empty in production. Next step is a dry run against
-real production `users`/`contacts` (needs a fresh service-account key, same one-time flow as the
-earlier `extraContacts` migration) to show Ryan the real cross-match results before committing.
+**Production import complete (2026-09-06).** The dry run against real production data first
+surfaced a genuinely useful gap: exact-name matching found zero linked accounts (only contacts) —
+real accounts are typed shorter than a genealogist's full-legal-name records ("Jack Martin" vs.
+"Jack Wilson Martin," bare "Ryan" vs. "Ryan Andrew Martin"). Added a subset-of-words fallback match
+(every word in the shorter name appears in the longer one), gated by birth year — an exact year
+match required when the overlap is only a single word, since a bare first name alone is weak
+evidence on its own; a looser same-year-or-unknown rule when two or more words overlap. This
+correctly resolved both real "Ryan Martin" accounts to their right generation (father b.1974 vs.
+son b.2007) via the strict single-word+exact-year rule, and picked up Jack Martin and a married
+contact's maiden-name record along the way. Final result, run for real: **285 people, 94 families,
+53 linked to an existing account or contact, 1 left ambiguous (unlinked, by design)** — verified
+directly against production Firestore counts after the write, not just the script's own report.
 
 ## Working Style / Preferences
 
