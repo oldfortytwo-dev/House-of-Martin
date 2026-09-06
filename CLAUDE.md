@@ -1200,6 +1200,41 @@ docs rather than upserting, so re-applying without clearing would have duplicate
 re-imported, and verified directly against production. **Final: 285 people, 94 families, 54 linked,
 0 ambiguous.**
 
+**Family-data review (2026-09-06) — deceased handling, four items, all shipped:** Ryan asked for a
+full review of households/branches/contacts "accounting better for deceased members," plus
+consideration for divorced/split families. Findings and fixes, in order:
+
+1. **`users/{uid}.deceased` + `deathDate`** — the actual gap: `contacts/{id}.deceased` existed
+   already (🕊 badge, excluded from pickers), but a real account-holder who died had no equivalent,
+   only "🚫 Deactivate," which reads administrative, not memorial. Deliberately NOT the same as
+   `status:'deactivated'` — `allApprovedUsers` (which drives Contacts/Family Tree/household lists)
+   filters to `status:'approved'`, so reusing status would make a deceased person vanish from those
+   lists instead of showing with a badge. A "🕊 Mark as Deceased" button sits next to Deactivate on
+   the profile page; once set, blocks login (own dedicated message), badges everywhere, excludes
+   from new RSVP/audience-picker/responder/DM selections going forward, suppresses the age badge —
+   all without touching anything already on record. **Divorced/split-family consideration**:
+   marking a household's responder deceased clears `responderId` rather than auto-reassigning it —
+   never presume who "takes over" (an ex-spouse, say); a living admin/member picks explicitly. This
+   builds on multi-household membership (already existing) already having no married-couple
+   assumption baked into the household model.
+2. **Reverse Ancestry <-> Contacts/Profile linking** — the GEDCOM import only ever wrote the
+   forward pointer (genealogy -> app person); added a client-side reverse map so a "🧬 View in
+   Ancestry" button appears on a linked profile/contact, and made the Ancestry side's existing "🔗
+   This is X" text clickable back — full two-way navigation, no new Firestore fields needed.
+3. **"Fill In Missing Death Dates from Ancestry" admin tool** — same review-before-apply pattern as
+   the existing birthday-linking tool: finds deceased people with no death date tracked in the
+   Calendar who DO have one in the genealogy import, lets an admin check off which to apply. GEDCOM
+   death dates are free text and often partial ("DEC 1887", "1957") — only a full day-level date
+   becomes a calendar entry; partials are listed separately, never guessed at.
+4. **Fully-deceased households get a distinct "🕊 Name — in memory" state** — everywhere a
+   household name renders (all three Contacts layouts, Family Tree, Admin → Households), and
+   excluded from the Wall/Event household-audience pickers going forward. Found and fixed a bonus
+   gap while in Family Tree: its account-holder node renderer never got the 🕊 badge that the
+   no-account-contact one already had.
+
+All four verified against the emulator with real multi-scenario seeds (not just code review)
+before deploying — see each commit for the specific test cases.
+
 ## Working Style / Preferences
 
 (Carried over from the developer's other project — apply here too.)
