@@ -1711,7 +1711,7 @@ $('fabBtn').onclick = () => {
 };
 
 function populateEventAudiencePickers() {
-  $('evHouseholdPicker').innerHTML = households.map(h =>
+  $('evHouseholdPicker').innerHTML = households.filter(h => !isHouseholdFullyDeceased(h)).map(h =>
     `<label class="chk"><input type="checkbox" value="${h.id}"> 🏠 ${escapeHtml(h.name)}</label>`
   ).join('') || '<span class="hh">No families set up yet</span>';
   $('evBranchPicker').innerHTML = branches.map(b =>
@@ -2163,6 +2163,30 @@ function contactsGroupedData() {
   }));
 }
 
+// #4 from the family-data review: a household where every person in it (real accounts and
+// no-account contacts alike) is deceased currently looks identical to a living, active one
+// everywhere it's listed — full member count, still offered as a message/event audience target.
+// allPeople is whatever this render site already fanned out (members + contacts) — reusing it
+// avoids a second lookup pass, and naturally returns false for an empty household (nobody to be
+// "fully deceased" — that's just unused, not closed).
+function isGroupFullyDeceased(allPeople) {
+  return allPeople.length > 0 && allPeople.every(p => p.deceased);
+}
+// Same check as isGroupFullyDeceased, but from a bare household doc (hh.memberIds/contactIds)
+// rather than an already-fanned-out people list — for call sites (audience pickers) that only
+// have the household, not a pre-built member/contact array.
+function isHouseholdFullyDeceased(hh) {
+  const members = (hh.memberIds || []).map(uid => usersById[uid]).filter(Boolean);
+  const contacts = (hh.contactIds || []).map(cid => contactsById[cid]).filter(Boolean);
+  return isGroupFullyDeceased([...members, ...contacts]);
+}
+function hhNameHtml(hh, allPeople) {
+  if (!hh) return 'No household set';
+  return isGroupFullyDeceased(allPeople)
+    ? `🕊 ${escapeHtml(hh.name)} <span class="hh" style="font-weight:400">— in memory</span>`
+    : `🏠 ${escapeHtml(hh.name)}`;
+}
+
 function hhSubtitleHtml(hh, count) {
   const bits = [];
   if (hh) {
@@ -2203,7 +2227,7 @@ function renderContactsAccordion(groups) {
     return `<details class="accHousehold">
       <summary class="accSummary">
         <div class="avatarStack">${stack}</div>
-        <div class="meta"><div class="hhName">${g.hh ? '🏠 ' + escapeHtml(g.hh.name) : 'No household set'}</div><div class="hhSub">${hhSubtitleHtml(g.hh, allPeople.length)}</div></div>
+        <div class="meta"><div class="hhName">${hhNameHtml(g.hh, allPeople)}</div><div class="hhSub">${hhSubtitleHtml(g.hh, allPeople.length)}</div></div>
         <span class="chev">▶</span>
       </summary>
       <div class="accBody">${rows}</div>
@@ -2219,7 +2243,7 @@ function renderContactsCards(groups) {
       return `<button ${attrs}>${avatar}<div><div class="nm">${escapeHtml(p.name)}${badges}</div>${info}</div></button>`;
     }).join('');
     return `<div class="dirCard">
-      <div class="hhName">${g.hh ? '🏠 ' + escapeHtml(g.hh.name) : 'No household set'}</div>
+      <div class="hhName">${hhNameHtml(g.hh, allPeople)}</div>
       <div class="hhSub">${hhSubtitleHtml(g.hh, allPeople.length)}</div>
       ${rows}
     </div>`;
@@ -2234,7 +2258,7 @@ function renderContactsGrid(groups) {
       return `<button ${attrs}><div class="avatarWrap">${avatar}</div><div class="nm">${escapeHtml(p.name)}</div><div class="badgeRow">${badges}</div></button>`;
     }).join('');
     return `<div class="gridHousehold">
-      <div class="hhName">${g.hh ? '🏠 ' + escapeHtml(g.hh.name) : 'No household set'}</div>
+      <div class="hhName">${hhNameHtml(g.hh, allPeople)}</div>
       <div class="hhSub">${hhSubtitleHtml(g.hh, allPeople.length)}</div>
       <div class="personGrid">${tiles}</div>
     </div>`;
@@ -2293,18 +2317,19 @@ $('contactDetailCloseBtn').onclick = () => $('contactDetailModalBg').classList.r
 // not a genealogical parent/child/spouse chart, since we don't collect that relationship
 // data anywhere) ----------
 function personNodeHtml(u) {
-  return `<li><div class="treeNode person">${avatarHtml(u.name, u.photoUrl, 22)}<span>${escapeHtml(u.name)}</span>${ageBadgeHtml(u)}</div></li>`;
+  return `<li><div class="treeNode person">${avatarHtml(u.name, u.photoUrl, 22)}<span>${escapeHtml(u.name)}${u.deceased ? ' 🕊' : ''}</span>${ageBadgeHtml(u)}</div></li>`;
 }
 function extraContactNodeHtml(ec) {
   return `<li><div class="treeNode person">${avatarHtml(ec.name, null, 22)}<span>${escapeHtml(ec.name)}${ec.deceased ? ' 🕊' : ''}</span>${ageBadgeHtml(ec)}<span class="treeMeta">no account</span></div></li>`;
 }
 function householdNodeHtml(hh) {
-  const memberItems = (hh.memberIds || []).map(uid => usersById[uid]).filter(Boolean).map(personNodeHtml).join('');
+  const members = (hh.memberIds || []).map(uid => usersById[uid]).filter(Boolean);
+  const memberItems = members.map(personNodeHtml).join('');
   const hhContacts = familyContacts.filter(c => (c.householdIds || []).includes(hh.id));
   const extraItems = hhContacts.map(extraContactNodeHtml).join('');
-  const count = (hh.memberIds || []).length + hhContacts.length;
+  const count = members.length + hhContacts.length;
   return `<li>
-    <div class="treeNode household">🏠 ${escapeHtml(hh.name)} <span class="treeMeta">(${count} ${count === 1 ? 'person' : 'people'})</span></div>
+    <div class="treeNode household">${hhNameHtml(hh, [...members, ...hhContacts])} <span class="treeMeta">(${count} ${count === 1 ? 'person' : 'people'})</span></div>
     ${memberItems || extraItems ? `<ul class="treeList">${memberItems}${extraItems}</ul>` : ''}
   </li>`;
 }
@@ -3897,7 +3922,7 @@ $('wallPhotoInput').addEventListener('change', (e) => {
 });
 
 function populateWallAudiencePickers() {
-  $('wallHouseholdPicker').innerHTML = households.map(h =>
+  $('wallHouseholdPicker').innerHTML = households.filter(h => !isHouseholdFullyDeceased(h)).map(h =>
     `<label class="chk"><input type="checkbox" value="${h.id}"> 🏠 ${escapeHtml(h.name)}</label>`
   ).join('') || '<span class="hh">No families set up yet</span>';
   $('wallBranchPicker').innerHTML = branches.map(b =>
@@ -4117,12 +4142,13 @@ function renderHouseholdsAdmin() {
     const box = document.createElement('div');
     box.className = 'hhEditor';
     const hhContacts = familyContacts.filter(c => (c.householdIds || []).includes(hh.id));
-    const memberCount = (hh.memberIds || []).length;
+    const hhMembers = (hh.memberIds || []).map(uid => usersById[uid]).filter(Boolean);
+    const memberCount = hhMembers.length;
     const extraCount = hhContacts.length;
     const summary = `
       <div style="display:flex; justify-content:space-between; align-items:center; gap:10px">
         <div>
-          <div class="nm">${escapeHtml(hh.name)}</div>
+          <div class="nm">${hhNameHtml(hh, [...hhMembers, ...hhContacts])}</div>
           <div class="hh">${hh.address ? escapeHtml(hh.address) + ' · ' : ''}${memberCount} member${memberCount === 1 ? '' : 's'}${extraCount ? `, ${extraCount} contact${extraCount === 1 ? '' : 's'} without an account` : ''}</div>
         </div>
         <button class="btn small secondary hhToggle">${expandedHouseholdIds.has(hh.id) ? 'Close' : 'Edit'}</button>
