@@ -732,6 +732,21 @@
         <div class="empty" id="recipeEmpty" style="display:none">No recipes yet. Add the first family favorite!</div>
       </section>
 
+      <!-- Ancestry — imported once from a GEDCOM genealogy file, see CLAUDE.md -->
+      <section class="tabpane" id="pane-ancestry">
+        <input type="text" id="ancestrySearch" placeholder="🔍 Search by name…" style="margin-bottom:10px">
+        <div id="ancestryList"></div>
+        <div class="empty" id="ancestryEmpty" style="display:none">No genealogy data imported yet.</div>
+      </section>
+
+      <!-- Ancestry person detail modal -->
+      <div class="modalBg" id="ancestryDetailModalBg">
+        <div class="modalSheet">
+          <div id="ancestryDetailBody"></div>
+          <button class="btn secondary" id="ancestryDetailCloseBtn" style="margin-top:14px">Close</button>
+        </div>
+      </div>
+
       <!-- Recipe detail modal -->
       <div class="modalBg" id="recipeDetailModalBg">
         <div class="modalSheet">
@@ -981,6 +996,7 @@
       <button data-tab="photos" id="wallTabBtn"><span class="ic">🧱</span><span class="lbl">Wall</span></button>
       <button data-tab="stories"><span class="ic">📖</span><span class="lbl">Stories</span></button>
       <button data-tab="recipes"><span class="ic">🍲</span><span class="lbl">Recipes</span></button>
+      <button data-tab="ancestry"><span class="ic">🧬</span><span class="lbl">Ancestry</span></button>
       <button data-tab="admin" id="adminTabBtn" style="display:none"><span class="ic">⚙️</span><span class="lbl">Admin</span></button>
     </nav>
   </div>
@@ -1333,7 +1349,8 @@ let pendingCount = 0, eventsCount = 0, albumsCount = 0;
 let unsubMsgs = null, unsubEvents = null, unsubAlbums = null, unsubContacts = null, unsubPending = null,
     unsubInvites = null, unsubHouseholds = null, unsubBranches = null, unsubPhotos = null, unsubOccasions = null,
     unsubDMs = null, unsubDigest = null, unsubAppearance = null, unsubWall = null, unsubNotifs = null,
-    unsubFamilyContacts = null, unsubStoryAnswers = null, unsubRecipes = null;
+    unsubFamilyContacts = null, unsubStoryAnswers = null, unsubRecipes = null,
+    unsubAncestryPeople = null, unsubAncestryFamilies = null;
 let _openAlbumId = null;
 let _wallPhotoFile = null;
 
@@ -1455,6 +1472,7 @@ onAuthStateChanged(auth, (user) => {
     initWall();
     initStories();
     initRecipes();
+    initAncestry();
     initContacts();
     initOccasions();
     initDMs();
@@ -1471,8 +1489,8 @@ function show(id) {
 }
 
 function cleanupListeners() {
-  [unsubMsgs, unsubEvents, unsubAlbums, unsubContacts, unsubPending, unsubInvites, unsubHouseholds, unsubBranches, unsubPhotos, unsubOccasions, unsubDMs, unsubDigest, unsubAppearance, unsubWall, unsubNotifs, unsubFamilyContacts, unsubStoryAnswers, unsubRecipes].forEach(u => u && u());
-  unsubMsgs = unsubEvents = unsubAlbums = unsubContacts = unsubPending = unsubInvites = unsubHouseholds = unsubBranches = unsubPhotos = unsubOccasions = unsubDMs = unsubDigest = unsubAppearance = unsubWall = unsubNotifs = unsubFamilyContacts = unsubStoryAnswers = unsubRecipes = null;
+  [unsubMsgs, unsubEvents, unsubAlbums, unsubContacts, unsubPending, unsubInvites, unsubHouseholds, unsubBranches, unsubPhotos, unsubOccasions, unsubDMs, unsubDigest, unsubAppearance, unsubWall, unsubNotifs, unsubFamilyContacts, unsubStoryAnswers, unsubRecipes, unsubAncestryPeople, unsubAncestryFamilies].forEach(u => u && u());
+  unsubMsgs = unsubEvents = unsubAlbums = unsubContacts = unsubPending = unsubInvites = unsubHouseholds = unsubBranches = unsubPhotos = unsubOccasions = unsubDMs = unsubDigest = unsubAppearance = unsubWall = unsubNotifs = unsubFamilyContacts = unsubStoryAnswers = unsubRecipes = unsubAncestryPeople = unsubAncestryFamilies = null;
   if (_heartbeatInterval) { clearInterval(_heartbeatInterval); _heartbeatInterval = null; }
 }
 
@@ -2861,6 +2879,90 @@ function initRecipes() {
     });
   });
 }
+
+// ---------- Ancestry (imported once from Dad's GEDCOM genealogy file — see CLAUDE.md) ----------
+// Read-only in the app (admin-write only, via a one-time import script, not a client-side
+// editor) — 285 people spanning generations, most deceased long before the app existed. Kept
+// entirely separate from contacts/{id} (no-account LIVING family members you might invite to a
+// household) since mixing 19th-century ancestors into that collection would badly clutter it.
+let ancestryPeople = [], ancestryPeopleById = {}, ancestryFamiliesById = {};
+
+function initAncestry() {
+  unsubAncestryPeople = onSnapshot(collection(db, 'ancestryPeople'), (snap) => {
+    ancestryPeople = []; ancestryPeopleById = {};
+    snap.forEach(d => { const p = { id: d.id, ...d.data() }; ancestryPeople.push(p); ancestryPeopleById[d.id] = p; });
+    ancestryPeople.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    renderAncestryList();
+  });
+  unsubAncestryFamilies = onSnapshot(collection(db, 'ancestryFamilies'), (snap) => {
+    ancestryFamiliesById = {};
+    snap.forEach(d => { ancestryFamiliesById[d.id] = { id: d.id, ...d.data() }; });
+    renderAncestryList();
+  });
+}
+
+function ancestryYears(p) {
+  const by = (p.birthDate || '').match(/\d{4}/)?.[0] || '?';
+  const dy = (p.deathDate || '').match(/\d{4}/)?.[0];
+  return dy ? `${by}–${dy}` : by;
+}
+
+function renderAncestryList() {
+  const term = ($('ancestrySearch').value || '').trim().toLowerCase();
+  const filtered = term
+    ? ancestryPeople.filter(p => (p.name || '').toLowerCase().includes(term) || (p.marriedName || '').toLowerCase().includes(term))
+    : ancestryPeople;
+  $('ancestryEmpty').style.display = ancestryPeople.length ? 'none' : 'block';
+  $('ancestryList').innerHTML = filtered.map(p => {
+    const linkBadge = p.linkedUserId ? ' <span class="respBadge">has account</span>' : (p.linkedContactId ? ' <span class="noAccountBadge">in family directory</span>' : '');
+    return `<div class="contactRow ancestryRow" data-id="${p.id}" style="cursor:pointer">
+      <div class="nm">${escapeHtml(p.name)}${p.marriedName ? ` <span class="hh">(m. ${escapeHtml(p.marriedName)})</span>` : ''}${linkBadge}</div>
+      <div class="info">${ancestryYears(p)}</div>
+    </div>`;
+  }).join('') || '<div class="empty">No one matches that search.</div>';
+  $('ancestryList').querySelectorAll('.ancestryRow').forEach(row => {
+    row.onclick = () => openAncestryDetail(row.dataset.id);
+  });
+}
+$('ancestrySearch').addEventListener('input', renderAncestryList);
+
+function ancestryPersonLinkHtml(id) {
+  const p = ancestryPeopleById[id];
+  if (!p) return '';
+  return `<button class="personLink ancestryJumpBtn" data-id="${id}" style="display:block; text-align:left; width:100%; padding:6px 0; background:none; border:none; color:var(--accent); cursor:pointer; font-size:14px">${escapeHtml(p.name)} <span class="hh">(${ancestryYears(p)})</span></button>`;
+}
+
+function openAncestryDetail(id) {
+  const p = ancestryPeopleById[id];
+  if (!p) return;
+  const parentFam = p.parentFamilyId ? ancestryFamiliesById[p.parentFamilyId] : null;
+  const parents = parentFam ? [parentFam.husbandId, parentFam.wifeId].filter(Boolean) : [];
+  const siblings = parentFam ? parentFam.childIds.filter(cid => cid !== id) : [];
+  const spouseFams = (p.spouseFamilyIds || []).map(fid => ancestryFamiliesById[fid]).filter(Boolean);
+  const spouses = spouseFams.map(f => (f.husbandId === id ? f.wifeId : f.husbandId)).filter(Boolean);
+  const children = spouseFams.flatMap(f => f.childIds);
+
+  const linkedName = p.linkedUserId ? (usersById[p.linkedUserId] && usersById[p.linkedUserId].name)
+    : p.linkedContactId ? (contactsById[p.linkedContactId] && contactsById[p.linkedContactId].name) : null;
+
+  $('ancestryDetailBody').innerHTML = `
+    <h3 style="margin-top:0">${escapeHtml(p.name)}</h3>
+    ${p.marriedName ? `<p class="hh">Married name: ${escapeHtml(p.marriedName)}</p>` : ''}
+    ${linkedName ? `<p class="hh">🔗 This is ${escapeHtml(linkedName)} in the family directory</p>` : ''}
+    <p class="hh">${p.birthDate ? `Born ${escapeHtml(p.birthDate)}${p.birthPlace ? ' in ' + escapeHtml(p.birthPlace) : ''}` : 'Birth date unknown'}</p>
+    ${p.deathDate ? `<p class="hh">Died ${escapeHtml(p.deathDate)}${p.deathPlace ? ' in ' + escapeHtml(p.deathPlace) : ''}</p>` : ''}
+    ${p.burialPlace ? `<p class="hh">Buried at ${escapeHtml(p.burialPlace)}</p>` : ''}
+    ${parents.length ? `<div class="nm" style="margin-top:14px; font-size:13px">⬆ Parents</div>${parents.map(ancestryPersonLinkHtml).join('')}` : ''}
+    ${siblings.length ? `<div class="nm" style="margin-top:14px; font-size:13px">👫 Siblings</div>${siblings.map(ancestryPersonLinkHtml).join('')}` : ''}
+    ${spouses.length ? `<div class="nm" style="margin-top:14px; font-size:13px">💍 Spouse${spouses.length > 1 ? 's' : ''}</div>${spouses.map(ancestryPersonLinkHtml).join('')}` : ''}
+    ${children.length ? `<div class="nm" style="margin-top:14px; font-size:13px">⬇ Children</div>${children.map(ancestryPersonLinkHtml).join('')}` : ''}
+  `;
+  $('ancestryDetailBody').querySelectorAll('.ancestryJumpBtn').forEach(btn => {
+    btn.onclick = () => openAncestryDetail(btn.dataset.id);
+  });
+  $('ancestryDetailModalBg').classList.add('open');
+}
+$('ancestryDetailCloseBtn').onclick = () => $('ancestryDetailModalBg').classList.remove('open');
 
 function openRecipeDetail(id) {
   const r = recipesById[id];

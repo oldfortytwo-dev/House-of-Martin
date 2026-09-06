@@ -97,6 +97,23 @@ service cloud.firestore {
       allow create, update, delete: if isApprovedMember();
     }
 
+    // Genealogy — imported once from a GEDCOM file (Dad's MacFamilyTree export), spanning
+    // generations of ancestors most of whom were never, and will never be, an account or a
+    // no-account contact/household member. Deliberately its own collection, not folded into
+    // contacts/{id}: a 19th-century ancestor has no bearing on RSVPs, households, or Wall
+    // visibility, and mixing 285 mostly-deceased genealogy records into the same collection used
+    // for "living family members you might invite to a household" would badly clutter it.
+    // Admin-write (curated import data, not something a member free-edits), any approved member
+    // reads/browses.
+    match /ancestryPeople/{personId} {
+      allow read: if isApprovedMember();
+      allow write: if isAdmin();
+    }
+    match /ancestryFamilies/{familyId} {
+      allow read: if isApprovedMember();
+      allow write: if isAdmin();
+    }
+
     match /notifications/{notifId} {
       // Someone else's reaction/comment on your post. The actor (fromUserId) creates it — never
       // themselves as the recipient (no self-notify) — and can also delete it later (needed so

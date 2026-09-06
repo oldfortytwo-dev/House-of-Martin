@@ -1149,6 +1149,42 @@ data already loaded, no server round-trip, with the same CSV formula-injection d
 sibling POS project's export). All verified against the emulator, not just code-reviewed, before
 deploying.
 
+Then, at Ryan's request: a **family conduct agreement** (a full-screen "Before You Dive In" screen
+— with Dad-joke humor per family request — is now the first thing anyone sees on login until they
+agree, via `users/{uid}.conductAgreedAt`; applies to new signups immediately and retroactively to
+every already-approved account) and a **personal Wall opt-out** (`users/{uid}.hideWall`, account-
+wide not per-device, hides just the Wall tab and On This Day from that person's own nav — doesn't
+touch anyone else's Wall or anything they've already posted).
+
+**GEDCOM genealogy import → new "🧬 Ancestry" tab (2026-09-05):** Ryan's dad had a genealogy file
+(`MARTIN FAMILY TREE.ged`, exported from MacFamilyTree) — 285 people and 94 family units spanning
+generations, most deceased long before this app existed. Rather than fold this into `contacts/{id}`
+(which represents *living* no-account family members you might invite to a household — mixing in
+19th-century ancestors would badly clutter it), it's its own pair of collections,
+`ancestryPeople/{id}` and `ancestryFamilies/{id}` (admin-write only, imported via a one-time script,
+not a client-side editor), with a new read-only "🧬 Ancestry" tab: search by name, tap into anyone
+to see parents/siblings/spouse(s)/children with click-through navigation across generations. People
+matching an existing account or contact show a "has account"/"in family directory" badge and link
+back to who they are in the app.
+
+Cross-matching (GEDCOM name -> existing users/contacts) went through two real bug fixes before it
+was trustworthy: (1) MacFamilyTree stores a married woman's maiden name as the *primary* NAME
+record and her married name as a second one — matching only checked the first, so married women
+systematically failed to link; fixed by trying every name variant. (2) The birth-year
+disambiguation check only ran when a GEDCOM person's name matched *multiple* app people — but this
+family reuses full names across generations (a father and son both named "Ryan Andrew Martin"), so
+a single nominal name match could still silently link the wrong generation's record to an account.
+Fixed to always compare birth years when both sides have one, even with just one nominal candidate.
+Verified by seeding exactly that father/son collision and confirming the 2007-born son's real
+account linked to the son's GEDCOM record, not the 1974-born father's.
+
+**Not yet done: the real production import.** The parser/importer (`import_gedcom.js`, defaults to
+a dry run that only reports what it would do; `--apply` commits) has only been run against the
+local emulator with synthetic test data so far — the collections, rules, and tab are deployed, but
+`ancestryPeople`/`ancestryFamilies` are still empty in production. Next step is a dry run against
+real production `users`/`contacts` (needs a fresh service-account key, same one-time flow as the
+earlier `extraContacts` migration) to show Ryan the real cross-match results before committing.
+
 ## Working Style / Preferences
 
 (Carried over from the developer's other project — apply here too.)
