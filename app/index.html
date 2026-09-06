@@ -1448,6 +1448,17 @@ onAuthStateChanged(auth, (user) => {
       show('pendingScreen');
       return;
     }
+    // Deceased is deliberately NOT a status value (see profileDeceasedBtn's comment for why —
+    // status:'approved' has to stay put so this person still shows up in Contacts/Family
+    // Tree/household lists with a 🕊 badge, the same treatment contacts/{id}.deceased already
+    // gets). Login is blocked here instead, as its own check, independent of status.
+    if (myDoc.deceased) {
+      if (_shellInitialized) { cleanupListeners(); _shellInitialized = false; }
+      $('pendingTitle').textContent = '🕊 In Loving Memory';
+      $('pendingText').textContent = `${myDoc.name} is remembered here, but this account is no longer active. If you believe this is a mistake, reach out to a family admin.`;
+      show('pendingScreen');
+      return;
+    }
     // Family conduct agreement — required once, before the app is usable at all, for every new
     // signup and retroactively for every already-approved account that hasn't agreed yet (see
     // the #conductScreen block above). Checked here, right alongside the pending/deactivated
@@ -1689,7 +1700,7 @@ function populateEventAudiencePickers() {
   $('evBranchPicker').innerHTML = branches.map(b =>
     `<label class="chk"><input type="checkbox" value="${b.id}"> 🌳 ${escapeHtml(b.name)}</label>`
   ).join('') || '<span class="hh">No groups set up yet</span>';
-  $('evIndividualPicker').innerHTML = allApprovedUsers.map(u =>
+  $('evIndividualPicker').innerHTML = allApprovedUsers.filter(u => !u.deceased).map(u =>
     `<label class="chk"><input type="checkbox" value="${u.id}"> ${escapeHtml(u.name)}${u.role === 'friend' ? ' <span class="hh">(friend)</span>' : ''}</label>`
   ).join('') || '<span class="hh">No approved members yet</span>';
 }
@@ -2059,7 +2070,10 @@ async function rsvpHousehold(eventId, householdId, status) {
   const hh = householdsById[householdId];
   if (!hh) return;
   const batch = writeBatch(db);
-  (hh.memberIds || []).forEach(uid => {
+  // Skip deceased members — a household-wide "All Yes" shouldn't RSVP someone who's passed away
+  // to a future event. Existing RSVPs from before they're marked deceased are untouched (this
+  // only affects new writes going forward).
+  (hh.memberIds || []).filter(uid => !usersById[uid]?.deceased).forEach(uid => {
     const u = usersById[uid];
     batch.set(doc(db, 'events', eventId, 'rsvps', uid), {
       status, submittedBy: currentUser.uid, name: u ? u.name : '(household member)',
@@ -2325,8 +2339,9 @@ function openProfile(uid) {
     <div style="display:flex; align-items:center; gap:14px">
       ${avatarWithPresenceHtml(u, 72)}
       <div>
-        <div style="font-size:1.3em; font-weight:700">${escapeHtml(u.name)}${ageBadgeHtml(u)}</div>
-        ${isUserOnline(u) ? '<div class="hh" style="color:#2ecc71; font-weight:600">● Active recently</div>' : ''}
+        <div style="font-size:1.3em; font-weight:700">${escapeHtml(u.name)}${u.deceased ? ' 🕊' : ''}${ageBadgeHtml(u)}</div>
+        ${u.deceased ? `<div class="hh">🕊 In loving memory${u.deathDate ? ' — ' + escapeHtml(u.deathDate) : ''}</div>` : ''}
+        ${!u.deceased && isUserOnline(u) ? '<div class="hh" style="color:#2ecc71; font-weight:600">● Active recently</div>' : ''}
         ${u.role === 'admin' ? '<div class="hh">⭐ Admin</div>' : ''}
         ${hhLines}
         ${branchNames.length ? `<div class="hh">🌳 ${branchNames.map(escapeHtml).join(', ')}</div>` : ''}
@@ -2334,14 +2349,52 @@ function openProfile(uid) {
     </div>`;
   const actions = [];
   if (canEditProfile(uid)) actions.push(`<button class="btn small secondary" id="profileEditBtn" style="width:auto">✎ Edit Info</button>`);
-  if (uid !== currentUser.uid) actions.push(`<button class="btn small secondary" id="profileDmBtn" style="width:auto">💬 Message</button>`);
+  // No "Message" button for a deceased account — they can't sign in to read it, so starting a
+  // new DM would be a dead end. Any DM thread that already existed with them before they died
+  // stays fully intact and readable in the channel list (nothing about their past messages
+  // changes) — this only stops NEW ones from being started.
+  if (uid !== currentUser.uid && !u.deceased) actions.push(`<button class="btn small secondary" id="profileDmBtn" style="width:auto">💬 Message</button>`);
   if (myDoc.role === 'admin' && uid !== currentUser.uid) actions.push(`<button class="btn small secondary" id="profileDeactivateBtn" style="width:auto">🚫 Deactivate</button>`);
+  // Deliberately a SEPARATE flag from status:'deactivated', not the same action — deactivation is
+  // an administrative/access-control tool ("blocked, can be undone"); deceased is a completely
+  // different kind of thing and reads wrong sharing that button's tone. It also can't reuse
+  // status the way deactivation does: allApprovedUsers (Contacts/Family Tree/household lists) is
+  // filtered to status:'approved', so flipping status here would make a deceased person vanish
+  // from those lists entirely — the opposite of the 🕊-badge-but-still-visible treatment
+  // contacts/{id}.deceased already gets. Login is blocked by a dedicated check in the auth
+  // routing instead (see onAuthStateChanged), independent of status.
+  if (myDoc.role === 'admin' && uid !== currentUser.uid) {
+    actions.push(`<button class="btn small secondary" id="profileDeceasedBtn" style="width:auto">${u.deceased ? '↩ Undo Deceased Mark' : '🕊 Mark as Deceased'}</button>`);
+  }
   $('profileActions').innerHTML = actions.join(' ');
   if ($('profileEditBtn')) $('profileEditBtn').onclick = () => { $('profileModalBg').classList.remove('open'); openEditProfile(uid); };
   if ($('profileDmBtn')) $('profileDmBtn').onclick = () => { $('profileModalBg').classList.remove('open'); startDM(uid); };
   if ($('profileDeactivateBtn')) $('profileDeactivateBtn').onclick = async () => {
     if (!confirm(`Deactivate ${u.name}'s account? They'll be signed out of the family space immediately, but nothing they've posted is deleted. You can reactivate them later from Admin → Deactivated accounts.`)) return;
     await updateDoc(doc(db, 'users', uid), { status: 'deactivated', deactivatedAt: serverTimestamp() });
+    $('profileModalBg').classList.remove('open');
+  };
+  if ($('profileDeceasedBtn')) $('profileDeceasedBtn').onclick = async () => {
+    if (u.deceased) {
+      await updateDoc(doc(db, 'users', uid), { deceased: false, deathDate: null });
+      $('profileModalBg').classList.remove('open');
+      return;
+    }
+    if (!confirm(`Mark ${u.name} as deceased? They'll be signed out and shown with a 🕊 in loving-memory badge everywhere, and no longer selectable for new RSVPs, messages, or invites going forward — but nothing they've ever posted or said is touched. This can be undone.`)) return;
+    const dateInput = prompt('Date of passing (optional — you can leave this blank and add it later):', '');
+    // Reassign, never auto-pick a replacement: if this person responds for any household, clear
+    // that field rather than guessing who takes over — especially relevant for a divorced/split
+    // family, where assuming an ex-spouse (or anyone else) becomes the new responder would be
+    // presumptuous. An admin or that household picks explicitly, same as any other responder
+    // handoff, via the existing "Responds for household" control.
+    const respondsFor = households.filter(hh => hh.responderId === uid);
+    const batch = writeBatch(db);
+    batch.update(doc(db, 'users', uid), { deceased: true, deathDate: dateInput || null });
+    respondsFor.forEach(hh => batch.update(doc(db, 'households', hh.id), { responderId: null }));
+    await batch.commit();
+    if (respondsFor.length) {
+      alert(`Done. ${u.name} responded for ${respondsFor.length} household(s) (${respondsFor.map(h => h.name).join(', ')}) — those now need a new responder assigned from their household editor.`);
+    }
     $('profileModalBg').classList.remove('open');
   };
 
@@ -2579,9 +2632,14 @@ function renderMyHousehold() {
       <select id="mhWhichHousehold">${myResponderHouseholds.map(h => `<option value="${h.id}" ${h.id === hh.id ? 'selected' : ''}>🏠 ${escapeHtml(h.name)}</option>`).join('')}</select>
     </div>` : '';
 
-  const responderOptions = (hh.memberIds || []).map(uid => {
+  // A deceased member can't become the responder — except the household's CURRENT responder
+  // stays selectable even if deceased, so the dropdown doesn't silently jump to someone else out
+  // from under an admin who hasn't reassigned it yet (defensive tolerance for the pre-fix state,
+  // or a household that hasn't been updated since — see profileDeceasedBtn, which clears
+  // responderId going forward but can't retroactively fix households from before this existed).
+  const responderOptions = (hh.memberIds || []).filter(uid => !usersById[uid]?.deceased || hh.responderId === uid).map(uid => {
     const u = usersById[uid];
-    return `<option value="${uid}" ${hh.responderId === uid ? 'selected' : ''}>${escapeHtml(u ? u.name : uid)}</option>`;
+    return `<option value="${uid}" ${hh.responderId === uid ? 'selected' : ''}>${escapeHtml(u ? u.name : uid)}${u && u.deceased ? ' 🕊' : ''}</option>`;
   }).join('') || `<option value="${currentUser.uid}" selected>${escapeHtml(myDoc.name)}</option>`;
 
   const hhContacts = familyContacts.filter(c => (c.householdIds || []).includes(hh.id));
@@ -2618,7 +2676,7 @@ function renderMyHousehold() {
     const u = usersById[uid];
     if (!u) return '';
     return `<div class="contactRow">
-      <div class="nm">${escapeHtml(u.name)}${hh.responderId === uid ? ' <span class="respBadge">responder</span>' : ''}</div>
+      <div class="nm">${escapeHtml(u.name)}${u.deceased ? ' 🕊' : ''}${hh.responderId === uid ? ' <span class="respBadge">responder</span>' : ''}</div>
       ${uid !== hh.responderId ? `<button class="editBtn mhRemoveMemberBtn" data-uid="${uid}">✕</button>` : ''}
     </div>`;
   }).join('') || '<div class="hh">None yet</div>';
@@ -3790,7 +3848,7 @@ function populateWallAudiencePickers() {
   $('wallBranchPicker').innerHTML = branches.map(b =>
     `<label class="chk"><input type="checkbox" value="${b.id}"> 🌳 ${escapeHtml(b.name)}</label>`
   ).join('') || '<span class="hh">No groups set up yet</span>';
-  $('wallIndividualPicker').innerHTML = allApprovedUsers.map(u =>
+  $('wallIndividualPicker').innerHTML = allApprovedUsers.filter(u => !u.deceased).map(u =>
     `<label class="chk"><input type="checkbox" value="${u.id}"> ${escapeHtml(u.name)}${u.role === 'friend' ? ' <span class="hh">(friend)</span>' : ''}</label>`
   ).join('') || '<span class="hh">No approved members yet</span>';
 }
@@ -4027,16 +4085,18 @@ function renderHouseholdsAdmin() {
     // options") that led to promoting extraContacts into its own collection in the first place.
     const memberOptions = allApprovedUsers.map(u => {
       const checked = (hh.memberIds || []).includes(u.id) ? 'checked' : '';
-      return `<label class="chk"><input type="checkbox" data-type="user" value="${u.id}" ${checked}> ${escapeHtml(u.name)}${ageBadgeHtml(u)}</label>`;
+      return `<label class="chk"><input type="checkbox" data-type="user" value="${u.id}" ${checked}> ${escapeHtml(u.name)}${u.deceased ? ' 🕊' : ''}${ageBadgeHtml(u)}</label>`;
     }).join('');
     const contactOptions = familyContacts.map(c => {
       const checked = (c.householdIds || []).includes(hh.id) ? 'checked' : '';
       return `<label class="chk"><input type="checkbox" data-type="contact" value="${c.id}" ${checked}> ${escapeHtml(c.name)}${c.deceased ? ' 🕊' : ''}${ageBadgeHtml(c)} <span class="noAccountBadge">no account</span></label>`;
     }).join('');
     const allOptions = memberOptions + contactOptions || '<span class="hh">Nobody in the family yet</span>';
-    const responderOptions = (hh.memberIds || []).map(uid => {
+    // Same "current responder stays selectable even if deceased, nobody else deceased is offered"
+    // rule as the self-service editor above.
+    const responderOptions = (hh.memberIds || []).filter(uid => !usersById[uid]?.deceased || hh.responderId === uid).map(uid => {
       const u = usersById[uid];
-      return `<option value="${uid}" ${hh.responderId === uid ? 'selected' : ''}>${escapeHtml(u ? u.name : uid)}</option>`;
+      return `<option value="${uid}" ${hh.responderId === uid ? 'selected' : ''}>${escapeHtml(u ? u.name : uid)}${u && u.deceased ? ' 🕊' : ''}</option>`;
     }).join('') || '<option value="">— add &amp; save members first —</option>';
     const extraRows = hhContacts.map(ec => {
       const state = ecUiState[ec.id];
@@ -5208,6 +5268,11 @@ function calcAge(birthdate) {
   return age;
 }
 function ageBadgeHtml(u) {
+  // Skip entirely for a deceased person — calcAge() against today's date would show the age
+  // they'd be now, not the age they were, which is wrong for anyone who died young. deathDate is
+  // free text (a quick prompt() entry, not guaranteed parseable), so "age at death" isn't
+  // reliably computable either — the 🕊 badge already communicates their status.
+  if (u.deceased) return '';
   const age = calcAge(u.birthdate);
   return (age !== null && age <= 21) ? ` <span class="ageBadge">Age ${age}</span>` : '';
 }
