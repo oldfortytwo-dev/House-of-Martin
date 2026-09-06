@@ -960,6 +960,23 @@
           </div>
         </details>
         <details class="adminAcc">
+          <summary><span>🕊 Fill In Missing Death Dates from Ancestry</span><span class="chev">▶</span></summary>
+          <div class="adminAccBody">
+            <p class="hh">Looks for people already marked deceased who have no death date tracked in the Calendar,
+              but DO have one in your imported genealogy data. Nothing is applied without your review — a partial
+              date (just a year, or a month and year with no day) can't be turned into a calendar entry and is
+              listed separately below instead.</p>
+            <button class="btn small" id="matchDeathDatesBtn">Find matches</button>
+            <div id="deathDateResults" style="margin-top:10px"></div>
+            <button class="btn small" id="applyDeathDatesBtn" style="display:none; margin-top:10px">Apply selected</button>
+            <div class="hh" id="deathDateStatus" style="margin-top:6px"></div>
+            <div id="deathDatePartialSection" style="display:none; margin-top:16px; padding-top:12px; border-top:1px dashed var(--border)">
+              <div class="nm" style="font-size:13px">Found, but no exact day to work with</div>
+              <div id="deathDatePartialResults" style="margin-top:8px"></div>
+            </div>
+          </div>
+        </details>
+        <details class="adminAcc">
           <summary><span>Households</span><span class="chev">▶</span></summary>
           <div class="adminAccBody">
             <div class="field"><input type="text" id="newHouseholdName" placeholder="e.g. The Alvarez-Martins"></div>
@@ -5086,6 +5103,140 @@ $('applyBirthdaysBtn').onclick = async () => {
   _birthdayMatches = [];
   $('matchResults').innerHTML = '';
   $('applyBirthdaysBtn').style.display = 'none';
+};
+
+// ---------- Fill In Missing Death Dates from Ancestry ----------
+// #3 from the family-data review: contacts/{id}.deceased and users/{uid}.deceased mark SOMEONE as
+// deceased, but that's separate from actually having a death-anniversary tracked in the Calendar
+// (occasions/{id}) — someone can be correctly badged 🕊 everywhere with no death date anyone can
+// see on the calendar or in exports. The GEDCOM import often already has the real date; this
+// finds people missing one in-app who have one in the genealogy data, same review-before-apply
+// pattern as the birthday-linking tool above.
+let _deathDateMatches = [];
+let _deathDatePartial = [];
+const GEDCOM_MONTHS = { JAN: 1, FEB: 2, MAR: 3, APR: 4, MAY: 5, JUN: 6, JUL: 7, AUG: 8, SEP: 9, OCT: 10, NOV: 11, DEC: 12 };
+
+// GEDCOM dates are free text and often partial — "22 MAY 1980" (full), "DEC 1887" (month+year,
+// no day), "1957" (year only). Only a full date can become a calendar entry (occasions need a
+// specific month+day); the other two are surfaced separately rather than silently dropped.
+function parseGedcomDeathDate(raw) {
+  if (!raw) return null;
+  const full = raw.trim().match(/^(\d{1,2})\s+([A-Z]{3,})\s+(\d{4})$/i);
+  if (full) {
+    const month = GEDCOM_MONTHS[full[2].slice(0, 3).toUpperCase()];
+    if (month) return { day: +full[1], month, year: +full[3], precision: 'full' };
+  }
+  const monthYear = raw.trim().match(/^([A-Z]{3,})\s+(\d{4})$/i);
+  if (monthYear) {
+    const month = GEDCOM_MONTHS[monthYear[1].slice(0, 3).toUpperCase()];
+    if (month) return { month, year: +monthYear[2], precision: 'monthYear' };
+  }
+  const yearOnly = raw.trim().match(/^(\d{4})$/);
+  if (yearOnly) return { year: +yearOnly[1], precision: 'year' };
+  return null;
+}
+
+$('matchDeathDatesBtn').onclick = () => {
+  // Anyone whose death is already tracked somewhere in the Calendar — either their own
+  // birthday-type entry carries deathMonth/deathDay, or a standalone memorial entry is linked to
+  // them — is already covered and shouldn't be re-suggested.
+  const covered = new Set();
+  occasions.forEach(o => {
+    if (o.type === 'birthday' && o.deceased && o.deathMonth && o.deathDay) {
+      if (o.linkedUserId) covered.add('user:' + o.linkedUserId);
+      if (o.linkedContactId) covered.add('contact:' + o.linkedContactId);
+    }
+    if (o.type === 'memorial') {
+      if (o.linkedUserId) covered.add('user:' + o.linkedUserId);
+      if (o.linkedContactId) covered.add('contact:' + o.linkedContactId);
+    }
+  });
+  // A birthday-type entry linked to this person, if one exists — the death date gets added to
+  // it (matching how a deceased person's birthday entry already carries their death fields)
+  // rather than creating a redundant second entry, if one is available to attach to.
+  const linkedBirthdayOccasion = {};
+  occasions.forEach(o => {
+    if (o.type !== 'birthday') return;
+    if (o.linkedUserId) linkedBirthdayOccasion['user:' + o.linkedUserId] = o.id;
+    if (o.linkedContactId) linkedBirthdayOccasion['contact:' + o.linkedContactId] = o.id;
+  });
+
+  const deceasedPeople = [
+    ...allApprovedUsers.filter(u => u.deceased).map(u => ({ kind: 'user', id: u.id, name: u.name })),
+    ...familyContacts.filter(c => c.deceased).map(c => ({ kind: 'contact', id: c.id, name: c.name })),
+  ];
+
+  _deathDateMatches = [];
+  _deathDatePartial = [];
+  let alreadyCovered = 0, noAncestryMatch = 0;
+  deceasedPeople.forEach(person => {
+    const key = person.kind + ':' + person.id;
+    if (covered.has(key)) { alreadyCovered++; return; }
+    const ancestryId = person.kind === 'user' ? ancestryByLinkedUserId[person.id] : ancestryByLinkedContactId[person.id];
+    const ap = ancestryId && ancestryPeopleById[ancestryId];
+    if (!ap || !ap.deathDate) { noAncestryMatch++; return; }
+    const parsed = parseGedcomDeathDate(ap.deathDate);
+    if (!parsed) { noAncestryMatch++; return; }
+    if (parsed.precision === 'full') {
+      _deathDateMatches.push({ person, date: parsed, existingOccasionId: linkedBirthdayOccasion[key] || null });
+    } else {
+      _deathDatePartial.push({ person, raw: ap.deathDate });
+    }
+  });
+
+  $('deathDateStatus').textContent = `${_deathDateMatches.length} new match(es) found · ${alreadyCovered} already tracked · ${_deathDatePartial.length} found with only a partial date · ${noAncestryMatch} have no usable genealogy match.`;
+  renderDeathDateMatches();
+  renderDeathDatePartial();
+};
+
+function renderDeathDateMatches() {
+  const wrap = $('deathDateResults');
+  if (!_deathDateMatches.length) { wrap.innerHTML = ''; $('applyDeathDatesBtn').style.display = 'none'; return; }
+  wrap.innerHTML = _deathDateMatches.map((m, i) => `
+    <div class="contactRow">
+      <label class="chk" style="flex:1">
+        <input type="checkbox" class="deathMatchChk" data-i="${i}" checked>
+        ${escapeHtml(m.person.name)} — died ${String(m.date.month).padStart(2, '0')}/${String(m.date.day).padStart(2, '0')}/${m.date.year}
+      </label>
+    </div>
+  `).join('');
+  $('applyDeathDatesBtn').style.display = 'block';
+}
+
+function renderDeathDatePartial() {
+  const section = $('deathDatePartialSection');
+  const wrap = $('deathDatePartialResults');
+  if (!_deathDatePartial.length) { section.style.display = 'none'; wrap.innerHTML = ''; return; }
+  section.style.display = 'block';
+  wrap.innerHTML = _deathDatePartial.map(p => `
+    <div class="contactRow"><div class="nm">${escapeHtml(p.person.name)} <span class="hh">genealogy says: ${escapeHtml(p.raw)}</span></div></div>
+  `).join('');
+}
+
+$('applyDeathDatesBtn').onclick = async () => {
+  let applied = 0;
+  for (let i = 0; i < _deathDateMatches.length; i++) {
+    const chk = document.querySelector(`.deathMatchChk[data-i="${i}"]`);
+    if (!chk || !chk.checked) continue;
+    const m = _deathDateMatches[i];
+    if (m.existingOccasionId) {
+      await updateDoc(doc(db, 'occasions', m.existingOccasionId), {
+        deathMonth: m.date.month, deathDay: m.date.day, deathYearRaw: String(m.date.year),
+      });
+    } else {
+      const payload = {
+        type: 'memorial', name: m.person.name, month: m.date.month, day: m.date.day, yearRaw: String(m.date.year),
+      };
+      if (m.person.kind === 'user') payload.linkedUserId = m.person.id;
+      else payload.linkedContactId = m.person.id;
+      await addDoc(collection(db, 'occasions'), payload);
+    }
+    applied++;
+  }
+  $('deathDateStatus').textContent = `Applied ${applied} death date(s).`;
+  _deathDateMatches = [];
+  $('deathDateResults').innerHTML = '';
+  $('applyDeathDatesBtn').style.display = 'none';
 };
 
 // ---------- Theming (live sync + UI) ----------
