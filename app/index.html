@@ -304,6 +304,7 @@
   .switchMode a { color: var(--accent); cursor: pointer; text-decoration: underline; }
   .errMsg { color: var(--accent); font-size: 14px; margin-top: 8px; min-height: 18px; }
   #pendingScreen { display: none; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; padding: 24px; text-align: center; }
+  #conductScreen { display: none; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; overflow-y: auto; }
 
   /* ---- Shell ---- */
   #shell { display: none; flex-direction: column; flex: 1; }
@@ -531,6 +532,23 @@
     <h2 id="pendingTitle">You're on the list 🎉</h2>
     <p style="color:var(--ink-soft)" id="pendingText">An admin needs to approve your account before you can see the family space. Check back soon.</p>
     <button class="btn secondary small" id="pendingSignOut">Sign out</button>
+  </div>
+
+  <!-- FAMILY CONDUCT AGREEMENT — shown once, before anything else, to every new signup and
+       retroactively to every already-approved account that hasn't agreed yet. See CLAUDE.md. -->
+  <div id="conductScreen" style="max-width:520px; margin:0 auto; padding:24px 20px; text-align:left">
+    <h2 style="margin-top:0">🏠 Before You Dive In</h2>
+    <p style="color:var(--ink-soft)">House of Martin is our family's private space — not a public app, and definitely not Facebook's evil cousin. A few simple expectations before you dive in:</p>
+    <ul style="color:var(--ink-soft); padding-left:20px; line-height:1.6">
+      <li>Be kind. Handle disagreements the way you would at the family dinner table — with love, and maybe passive-aggressively passing the mashed potatoes.</li>
+      <li>What's shared here stays in the family. Leaks are for faucets, not group chats — please don't screenshot or forward photos, posts, or messages outside the family without asking first.</li>
+      <li>Think before posting about someone else, especially the kids — the way you'd want them represented (yes, that includes the toddler photos from '05).</li>
+      <li>This is a space for connection, not politics, sales pitches, or arguments better had in person. Save the debates for Thanksgiving, like the rest of America.</li>
+      <li>An admin can remove a post or comment that crosses these lines, and in serious cases pause someone's access — think less "the Wall police," more "Grandma with the remote control."</li>
+    </ul>
+    <p style="color:var(--ink-soft)">By tapping below, you're promising to keep this a kind, private, and only mildly cringe space for our family. Deal?</p>
+    <button class="btn" id="conductAgreeBtn">🤝 I Agree — Let's Do This</button>
+    <button class="btn secondary small" id="conductSignOut" style="margin-top:10px">Sign out</button>
   </div>
 
   <!-- SHELL -->
@@ -960,7 +978,7 @@
       <button data-tab="events"><span class="ic">📅</span><span class="lbl">Events</span></button>
       <button data-tab="contacts"><span class="ic">📇</span><span class="lbl">Contacts</span></button>
       <button data-tab="calendar"><span class="ic">🎂</span><span class="lbl">Calendar</span></button>
-      <button data-tab="photos"><span class="ic">🧱</span><span class="lbl">Wall</span></button>
+      <button data-tab="photos" id="wallTabBtn"><span class="ic">🧱</span><span class="lbl">Wall</span></button>
       <button data-tab="stories"><span class="ic">📖</span><span class="lbl">Stories</span></button>
       <button data-tab="recipes"><span class="ic">🍲</span><span class="lbl">Recipes</span></button>
       <button data-tab="admin" id="adminTabBtn" style="display:none"><span class="ic">⚙️</span><span class="lbl">Admin</span></button>
@@ -1102,6 +1120,10 @@
         <input type="checkbox" id="largeTextToggle"> 🔠 Large text &amp; photos
       </label>
       <p class="hh" id="themeScopeNote">Applies to your device only. <span id="themeFamilyDefaultNote"></span></p>
+      <label class="chk" style="font-size:15px; font-weight:600; margin-bottom:4px">
+        <input type="checkbox" id="hideWallToggle"> 🙈 Hide the Wall for me
+      </label>
+      <p class="hh" style="margin-bottom:14px">Not everyone wants a scrolling feed — turn this on to remove the Wall tab from your own account. Nothing you've already posted changes for anyone else, and you can turn this back on anytime. Applies to your account, not just this device.</p>
       <div class="themeGrid" id="themeGrid"></div>
       <div id="themeAdminActions" style="display:none; margin-top:14px; padding-top:10px; border-top:1px dashed var(--border)">
         <button class="btn small secondary" id="setFamilyDefaultBtn">🌟 Set current theme as family default</button>
@@ -1361,6 +1383,18 @@ function friendlyAuthErr(err) {
 }
 
 $('pendingSignOut').onclick = () => signOut(auth);
+$('conductSignOut').onclick = () => signOut(auth);
+$('conductAgreeBtn').onclick = async () => {
+  $('conductAgreeBtn').disabled = true;
+  try {
+    await updateDoc(doc(db, 'users', currentUser.uid), { conductAgreedAt: serverTimestamp() });
+    // No need to call show('shell') here — the myDoc onSnapshot listener above reacts to this
+    // write and re-routes on its own, same as every other status-driven transition in this app.
+  } catch (err) {
+    alert('Could not save your agreement — please try again: ' + (err.message || err));
+    $('conductAgreeBtn').disabled = false;
+  }
+};
 $('signOutBtn').onclick = () => signOut(auth);
 
 // ---------- Auth state / routing ----------
@@ -1397,9 +1431,19 @@ onAuthStateChanged(auth, (user) => {
       show('pendingScreen');
       return;
     }
+    // Family conduct agreement — required once, before the app is usable at all, for every new
+    // signup and retroactively for every already-approved account that hasn't agreed yet (see
+    // the #conductScreen block above). Checked here, right alongside the pending/deactivated
+    // gate above, so there's no path into the shell that skips it.
+    if (!myDoc.conductAgreedAt) {
+      if (_shellInitialized) { cleanupListeners(); _shellInitialized = false; }
+      show('conductScreen');
+      return;
+    }
     show('shell');
     $('whoami').textContent = `${myDoc.name} · ${myDoc.role}`;
     $('adminTabBtn').style.display = myDoc.role === 'admin' ? 'flex' : 'none';
+    applyWallVisibility();
     if (_shellInitialized) return; // avoid re-subscribing everything on every unrelated profile-doc change
     _shellInitialized = true;
     initHouseholds();
@@ -1423,7 +1467,7 @@ onAuthStateChanged(auth, (user) => {
 });
 
 function show(id) {
-  ['authScreen','pendingScreen','shell'].forEach(s => $(s).style.display = (s === id) ? (s==='shell'?'flex':'flex') : 'none');
+  ['authScreen','pendingScreen','conductScreen','shell'].forEach(s => $(s).style.display = (s === id) ? 'flex' : 'none');
 }
 
 function cleanupListeners() {
@@ -4911,8 +4955,30 @@ $('themeBtn').onclick = () => {
   $('themeFamilyDefaultNote').textContent = myDoc && myDoc.role === 'admin'
     ? '' : `The family default is set by an admin.`;
   $('largeTextToggle').checked = document.body.classList.contains('large-text');
+  $('hideWallToggle').checked = !!(myDoc && myDoc.hideWall);
   renderThemeGrid();
   $('themeModalBg').classList.add('open');
+};
+// Personal, reversible, account-wide (not per-device like Large Text) — stored on the user doc
+// so it follows the account across devices. Purely "don't show ME the Wall": doesn't touch
+// anyone else's Wall, doesn't hide or delete anything this person has already posted there, and
+// doesn't affect notifications for reactions/comments on their existing posts.
+function applyWallVisibility() {
+  const hidden = !!(myDoc && myDoc.hideWall);
+  $('wallTabBtn').style.display = hidden ? 'none' : 'flex';
+  // If they're currently sitting on the Wall tab when this turns on (toggled live, or synced in
+  // from another device), there'd be no active nav button left highlighted — bounce to Messages.
+  if (hidden && document.querySelector("nav.tabbar button[data-tab='photos']").classList.contains('active')) {
+    document.querySelector("nav.tabbar button[data-tab='messages']").click();
+  }
+}
+$('hideWallToggle').onchange = async (e) => {
+  try {
+    await updateDoc(doc(db, 'users', currentUser.uid), { hideWall: e.target.checked });
+  } catch (err) {
+    alert('Could not save that: ' + (err.message || err));
+    e.target.checked = !e.target.checked;
+  }
 };
 $('themeCloseBtn').onclick = () => $('themeModalBg').classList.remove('open');
 $('largeTextToggle').onchange = (e) => {
