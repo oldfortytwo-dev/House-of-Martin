@@ -2236,9 +2236,12 @@ function renderContacts(themeOverride) {
 }
 
 // ---------- Contact detail (no-account contacts — real accounts use openProfile() instead) ----------
+let _openContactDetailId = null; // tracked so initAncestry() can refresh this modal in place if it's open
+
 function openContactDetail(contactId) {
   const ec = contactsById[contactId];
   if (!ec) return;
+  _openContactDetailId = contactId;
   const hhs = (ec.householdIds || []).map(id => householdsById[id]).filter(Boolean);
   const canEdit = myDoc.role === 'admin' || hhs.some(hh => hh.responderId === currentUser.uid);
   const infoLines = [ec.phone ? `📞 ${escapeHtml(ec.phone)}` : '', ec.email ? `✉️ ${escapeHtml(ec.email)}` : ''].filter(Boolean);
@@ -2253,8 +2256,14 @@ function openContactDetail(contactId) {
       </div>
     </div>
     ${infoLines.length ? `<div style="margin-top:14px; line-height:1.8">${infoLines.join('<br>')}</div>` : ''}
+    ${ancestryByLinkedContactId[contactId] ? `<button class="btn small secondary" id="contactAncestryBtn" style="width:auto; margin-top:14px">🧬 View in Ancestry</button>` : ''}
     ${canEdit ? `<p class="hh" style="margin-top:14px">To edit, mark deceased, remove, or change which households this person belongs to, use 🏠 Edit My Household or Admin → Households.</p>` : ''}
   `;
+  if ($('contactAncestryBtn')) $('contactAncestryBtn').onclick = () => {
+    $('contactDetailModalBg').classList.remove('open');
+    document.querySelector("nav.tabbar button[data-tab='ancestry']").click();
+    openAncestryDetail(ancestryByLinkedContactId[contactId]);
+  };
   $('contactDetailModalBg').classList.add('open');
 }
 document.addEventListener('click', (e) => {
@@ -2326,10 +2335,12 @@ document.addEventListener('click', (e) => {
 });
 
 let unsubProfileFeed = null;
+let _openProfileUid = null; // tracked so initAncestry() can refresh this modal in place if it's open
 
 function openProfile(uid) {
   const u = usersById[uid];
   if (!u) return;
+  _openProfileUid = uid;
   const myHhs = userHouseholdIds(u).map(id => householdsById[id]).filter(Boolean);
   const branchNames = [...new Set(myHhs.flatMap(hh => branches.filter(b => (b.householdIds || []).includes(hh.id)).map(b => b.name)))];
   const hhLines = myHhs.length
@@ -2354,6 +2365,7 @@ function openProfile(uid) {
   // stays fully intact and readable in the channel list (nothing about their past messages
   // changes) — this only stops NEW ones from being started.
   if (uid !== currentUser.uid && !u.deceased) actions.push(`<button class="btn small secondary" id="profileDmBtn" style="width:auto">💬 Message</button>`);
+  if (ancestryByLinkedUserId[uid]) actions.push(`<button class="btn small secondary" id="profileAncestryBtn" style="width:auto">🧬 View in Ancestry</button>`);
   if (myDoc.role === 'admin' && uid !== currentUser.uid) actions.push(`<button class="btn small secondary" id="profileDeactivateBtn" style="width:auto">🚫 Deactivate</button>`);
   // Deliberately a SEPARATE flag from status:'deactivated', not the same action — deactivation is
   // an administrative/access-control tool ("blocked, can be undone"); deceased is a completely
@@ -2369,6 +2381,11 @@ function openProfile(uid) {
   $('profileActions').innerHTML = actions.join(' ');
   if ($('profileEditBtn')) $('profileEditBtn').onclick = () => { $('profileModalBg').classList.remove('open'); openEditProfile(uid); };
   if ($('profileDmBtn')) $('profileDmBtn').onclick = () => { $('profileModalBg').classList.remove('open'); startDM(uid); };
+  if ($('profileAncestryBtn')) $('profileAncestryBtn').onclick = () => {
+    $('profileModalBg').classList.remove('open');
+    document.querySelector("nav.tabbar button[data-tab='ancestry']").click();
+    openAncestryDetail(ancestryByLinkedUserId[uid]);
+  };
   if ($('profileDeactivateBtn')) $('profileDeactivateBtn').onclick = async () => {
     if (!confirm(`Deactivate ${u.name}'s account? They'll be signed out of the family space immediately, but nothing they've posted is deleted. You can reactivate them later from Admin → Deactivated accounts.`)) return;
     await updateDoc(doc(db, 'users', uid), { status: 'deactivated', deactivatedAt: serverTimestamp() });
@@ -2944,13 +2961,27 @@ function initRecipes() {
 // entirely separate from contacts/{id} (no-account LIVING family members you might invite to a
 // household) since mixing 19th-century ancestors into that collection would badly clutter it.
 let ancestryPeople = [], ancestryPeopleById = {}, ancestryFamiliesById = {};
+// Reverse of ancestryPeople.linkedUserId/linkedContactId — the import only writes the forward
+// pointer (genealogy -> app person), so Contacts/profile pages need this to find their way back
+// to a matching Ancestry record without a query. Rebuilt fresh every time ancestryPeople loads.
+let ancestryByLinkedUserId = {}, ancestryByLinkedContactId = {};
 
 function initAncestry() {
   unsubAncestryPeople = onSnapshot(collection(db, 'ancestryPeople'), (snap) => {
     ancestryPeople = []; ancestryPeopleById = {};
-    snap.forEach(d => { const p = { id: d.id, ...d.data() }; ancestryPeople.push(p); ancestryPeopleById[d.id] = p; });
+    ancestryByLinkedUserId = {}; ancestryByLinkedContactId = {};
+    snap.forEach(d => {
+      const p = { id: d.id, ...d.data() };
+      ancestryPeople.push(p); ancestryPeopleById[d.id] = p;
+      if (p.linkedUserId) ancestryByLinkedUserId[p.linkedUserId] = p.id;
+      if (p.linkedContactId) ancestryByLinkedContactId[p.linkedContactId] = p.id;
+    });
     ancestryPeople.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
     renderAncestryList();
+    // Whichever of Profile/Contact-detail is currently open may now have (or have lost) an
+    // Ancestry link — re-render it so the button appears/disappears without needing a re-click.
+    if ($('profileModalBg').classList.contains('open') && _openProfileUid) openProfile(_openProfileUid);
+    if ($('contactDetailModalBg').classList.contains('open') && _openContactDetailId) openContactDetail(_openContactDetailId);
   });
   unsubAncestryFamilies = onSnapshot(collection(db, 'ancestryFamilies'), (snap) => {
     ancestryFamiliesById = {};
@@ -3006,7 +3037,7 @@ function openAncestryDetail(id) {
   $('ancestryDetailBody').innerHTML = `
     <h3 style="margin-top:0">${escapeHtml(p.name)}</h3>
     ${p.marriedName ? `<p class="hh">Married name: ${escapeHtml(p.marriedName)}</p>` : ''}
-    ${linkedName ? `<p class="hh">🔗 This is ${escapeHtml(linkedName)} in the family directory</p>` : ''}
+    ${linkedName ? `<p class="hh">🔗 This is <button class="personLink ancestryToDirectoryBtn" style="background:none; border:none; padding:0; color:var(--accent); cursor:pointer; font-size:inherit; text-decoration:underline">${escapeHtml(linkedName)}</button> in the family directory</p>` : ''}
     <p class="hh">${p.birthDate ? `Born ${escapeHtml(p.birthDate)}${p.birthPlace ? ' in ' + escapeHtml(p.birthPlace) : ''}` : 'Birth date unknown'}</p>
     ${p.deathDate ? `<p class="hh">Died ${escapeHtml(p.deathDate)}${p.deathPlace ? ' in ' + escapeHtml(p.deathPlace) : ''}</p>` : ''}
     ${p.burialPlace ? `<p class="hh">Buried at ${escapeHtml(p.burialPlace)}</p>` : ''}
@@ -3018,6 +3049,13 @@ function openAncestryDetail(id) {
   $('ancestryDetailBody').querySelectorAll('.ancestryJumpBtn').forEach(btn => {
     btn.onclick = () => openAncestryDetail(btn.dataset.id);
   });
+  if ($('ancestryDetailBody').querySelector('.ancestryToDirectoryBtn')) {
+    $('ancestryDetailBody').querySelector('.ancestryToDirectoryBtn').onclick = () => {
+      $('ancestryDetailModalBg').classList.remove('open');
+      if (p.linkedUserId) openProfile(p.linkedUserId);
+      else if (p.linkedContactId) openContactDetail(p.linkedContactId);
+    };
+  }
   $('ancestryDetailModalBg').classList.add('open');
 }
 $('ancestryDetailCloseBtn').onclick = () => $('ancestryDetailModalBg').classList.remove('open');
