@@ -1187,9 +1187,18 @@ match required when the overlap is only a single word, since a bare first name a
 evidence on its own; a looser same-year-or-unknown rule when two or more words overlap. This
 correctly resolved both real "Ryan Martin" accounts to their right generation (father b.1974 vs.
 son b.2007) via the strict single-word+exact-year rule, and picked up Jack Martin and a married
-contact's maiden-name record along the way. Final result, run for real: **285 people, 94 families,
-53 linked to an existing account or contact, 1 left ambiguous (unlinked, by design)** — verified
-directly against production Firestore counts after the write, not just the script's own report.
+contact's maiden-name record along the way. First real run: 285 people, 94 families, 53 linked,
+**1 left ambiguous** ("Nancy Shortino" matched both "Nancy Martin" and "Robert Martin").
+
+Root cause: a `TYPE married` NAME record in GEDCOM often specifies only the new surname with an
+empty given name (raw `/MARTIN/`) — parsed down to the bare word "MARTIN," which subset-matches
+against *any* Martin, not just the right one. Fixed by reconstructing the married name as
+`<given name from the primary/maiden record> <married surname>` instead of using the bare surname
+on its own — "Nancy Shortino" + married `/Martin/` now correctly becomes "Nancy Martin," an exact
+match, not a collision. Re-ran end to end: cleared the previous import (the script creates fresh
+docs rather than upserting, so re-applying without clearing would have duplicated all 285 people),
+re-imported, and verified directly against production. **Final: 285 people, 94 families, 54 linked,
+0 ambiguous.**
 
 ## Working Style / Preferences
 
