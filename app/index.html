@@ -1158,13 +1158,17 @@
       </label>
       <p class="hh" style="margin-bottom:14px">Not everyone wants a scrolling feed — turn this on to remove the Wall tab from your own account. Nothing you've already posted changes for anyone else, and you can turn this back on anytime. Applies to your account, not just this device.</p>
       <div class="themeGrid" id="themeGrid"></div>
-      <div id="themeAdminActions" style="display:none; margin-top:14px; padding-top:10px; border-top:1px dashed var(--border)">
-        <button class="btn small secondary" id="setFamilyDefaultBtn">🌟 Set current theme as family default</button>
-        <button class="btn small secondary" id="openThemeEditorBtn" style="margin-top:8px">🛠 Build a custom theme</button>
-        <button class="btn small secondary" id="setBannerBtn" style="margin-top:8px">🖼 Add banner photo(s)</button>
+      <div style="margin-top:14px; padding-top:10px; border-top:1px dashed var(--border)">
+        <div class="nm" style="font-size:13px">🖼 My Header Filmstrip</div>
+        <p class="hh">Your own scrolling photo strip at the top of the app — just for you, nobody else sees it or can change it.</p>
+        <button class="btn small secondary" id="setBannerBtn">🖼 Add photo(s)</button>
         <input type="file" id="bannerFileInput" accept="image/*" multiple style="display:none">
         <div class="hh" id="bannerCountNote" style="margin-top:6px"></div>
         <div id="bannerPhotoList"></div>
+      </div>
+      <div id="themeAdminActions" style="display:none; margin-top:14px; padding-top:10px; border-top:1px dashed var(--border)">
+        <button class="btn small secondary" id="setFamilyDefaultBtn">🌟 Set current theme as family default</button>
+        <button class="btn small secondary" id="openThemeEditorBtn" style="margin-top:8px">🛠 Build a custom theme</button>
       </div>
       <button class="btn secondary" id="themeCloseBtn" style="margin-top:14px">Close</button>
     </div>
@@ -1489,6 +1493,13 @@ onAuthStateChanged(auth, (user) => {
     $('whoami').textContent = `${myDoc.name} · ${myDoc.role}`;
     $('adminTabBtn').style.display = myDoc.role === 'admin' ? 'flex' : 'none';
     applyWallVisibility();
+    // Personal header filmstrip — every family member's own, not shared/admin-set (see
+    // "PWA install"/theming history in CLAUDE.md for why this moved off config/appearance).
+    // Lives directly on the user doc, so it just rides along with every myDoc update, same as
+    // applyWallVisibility() above.
+    bannerPhotos = myDoc.bannerPhotos || [];
+    updateBannerDisplay();
+    renderBannerPhotoList();
     if (_shellInitialized) return; // avoid re-subscribing everything on every unrelated profile-doc change
     _shellInitialized = true;
     initHouseholds();
@@ -5273,10 +5284,7 @@ function initAppearance() {
     const data = snap.exists() ? snap.data() : {};
     familyDefaultThemeId = data.defaultThemeId || 'classic';
     customThemes = data.customThemes || [];
-    bannerPhotos = data.bannerPhotos || [];
     loadAndApplyMyTheme();
-    updateBannerDisplay();
-    renderBannerPhotoList();
     if ($('themeModalBg').classList.contains('open')) renderThemeGrid();
 
     const enabled = data.digestEnabled === true;
@@ -5319,7 +5327,7 @@ function renderBannerPhotoList() {
       const i = +btn.dataset.i;
       const removed = bannerPhotos[i];
       const updated = bannerPhotos.filter((_, idx) => idx !== i);
-      await setDoc(doc(db, 'config', 'appearance'), { bannerPhotos: updated }, { merge: true });
+      await updateDoc(doc(db, 'users', currentUser.uid), { bannerPhotos: updated });
       if (removed && removed.storagePath) {
         try { await deleteObject(ref(storage, removed.storagePath)); } catch (err) { console.warn('Storage delete failed', err); }
       }
@@ -5411,7 +5419,7 @@ $('bannerFileInput').addEventListener('change', async (e) => {
     const url = await getDownloadURL(sRef);
     uploaded.push({ url, storagePath });
   }
-  await setDoc(doc(db, 'config', 'appearance'), { bannerPhotos: [...bannerPhotos, ...uploaded] }, { merge: true });
+  await updateDoc(doc(db, 'users', currentUser.uid), { bannerPhotos: [...bannerPhotos, ...uploaded] });
 });
 
 // ---------- Custom theme editor ----------
