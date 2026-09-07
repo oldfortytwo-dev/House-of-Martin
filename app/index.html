@@ -32,8 +32,13 @@
      see nav.tabbar below — but this is cheap insurance against the same class of bug from
      anywhere else too) forcing the whole page wider than the viewport. Without this, an
      overflowing child doesn't just scroll itself — the page shifts sideways and everything else
-     (message bubbles, cards, anything) can render partially off-screen. */
-  html, body { overflow-x: hidden; max-width: 100vw; }
+     (message bubbles, cards, anything) can render partially off-screen.
+     `clip`, not `hidden`: overflow-x:hidden forces overflow-y to compute as auto (per the CSS
+     Overflow spec) when it was visible, which turns body into its OWN scroll container instead
+     of the page scrolling at the document root — and that broke nav.tabbar's position:sticky
+     (it stopped sticking to the viewport bottom, sitting at the end of the content instead,
+     requiring a scroll to reach). `clip` clips the horizontal axis without that side effect. */
+  html, body { overflow-x: clip; max-width: 100vw; }
   body { margin: 0; font-family: var(--font-body); background: var(--bg); color: var(--ink); transition: background .3s, color .3s; }
   /* "Large text & photos" personal preference (#largeTextToggle) — nearly all of this
      stylesheet's font/spacing/image sizes are fixed px, not rem, so a body font-size bump
