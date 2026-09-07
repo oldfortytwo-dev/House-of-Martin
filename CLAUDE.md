@@ -1235,6 +1235,19 @@ consideration for divorced/split families. Findings and fixes, in order:
 All four verified against the emulator with real multi-scenario seeds (not just code review)
 before deploying — see each commit for the specific test cases.
 
+**Pre-go-live cleanup (2026-09-07):** two things ahead of launch. (1) The header filmstrip moved
+from one shared admin-curated `config/appearance.bannerPhotos` to `users/{uid}.bannerPhotos` —
+every member now has their own, not just admins editing one shared strip for everyone. (2) Ran a
+one-time production content wipe (dry-run first, confirmed against real counts, then applied) to
+clear everything created during early testing with Jack and Ryan Jr — messages, events (+ RSVPs/
+signups), Wall posts, albums/photos, notifications, and digest submissions — while leaving every
+"who's in the family" collection completely untouched (users, households, branches, contacts,
+occasions, the genealogy import). Verified directly against production before and after: content
+collections all confirmed at 0, family-data collections confirmed unchanged (4 users, 34
+households, 11 branches, 74 contacts, 95 calendar entries, 285 genealogy people, 94 families). The
+wipe script itself was never committed to the repo — one-time use, lives only in that session's
+scratchpad, same as the earlier extraContacts/GEDCOM migration scripts.
+
 ## Working Style / Preferences
 
 (Carried over from the developer's other project — apply here too.)
