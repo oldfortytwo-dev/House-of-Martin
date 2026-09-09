@@ -513,6 +513,8 @@
   .modalBg { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.4); align-items: flex-end; justify-content: center; z-index: 50; }
   .modalBg.open { display: flex; }
   .modalSheet { background: var(--card); border-radius: 16px 16px 0 0; padding: 20px; width: 100%; max-width: 560px; max-height: 85vh; overflow-y: auto; }
+  .moreNavRow { display: block; width: 100%; text-align: left; padding: 14px 4px; background: none; border: none; border-bottom: 1px solid var(--border); font-size: 16px; color: var(--ink); cursor: pointer; }
+  .moreNavRow:last-child { border-bottom: none; }
   .modalSheet h3 { margin-top: 0; }
 </style>
 </head>
@@ -1025,17 +1027,39 @@
 
     <button class="fab" id="fabBtn" style="display:none">+</button>
 
+    <!-- 9 tabs was too many for one bottom bar (Ryan's real-phone screenshot showed message
+         bubbles cut off — the nav's own minimum width was pushing the whole page wider than the
+         viewport). Pinned to 4 most-used; the rest still exist as real buttons (so every existing
+         .click()-based cross-link — Ancestry from a profile, "View Family Tree", etc. — keeps
+         working unchanged) but are visually hidden here and surfaced through the "☰ More" sheet
+         instead, the standard mobile pattern for more tabs than comfortably fit. -->
     <nav class="tabbar">
       <button data-tab="messages" class="active"><span class="ic">💬</span><span class="lbl">Messages</span></button>
       <button data-tab="events"><span class="ic">📅</span><span class="lbl">Events</span></button>
       <button data-tab="contacts"><span class="ic">📇</span><span class="lbl">Contacts</span></button>
-      <button data-tab="calendar"><span class="ic">🎂</span><span class="lbl">Calendar</span></button>
       <button data-tab="photos" id="wallTabBtn"><span class="ic">🧱</span><span class="lbl">Wall</span></button>
-      <button data-tab="stories"><span class="ic">📖</span><span class="lbl">Stories</span></button>
-      <button data-tab="recipes"><span class="ic">🍲</span><span class="lbl">Recipes</span></button>
-      <button data-tab="ancestry"><span class="ic">🧬</span><span class="lbl">Ancestry</span></button>
+      <button data-tab="calendar" style="display:none"><span class="ic">🎂</span><span class="lbl">Calendar</span></button>
+      <button data-tab="stories" style="display:none"><span class="ic">📖</span><span class="lbl">Stories</span></button>
+      <button data-tab="recipes" style="display:none"><span class="ic">🍲</span><span class="lbl">Recipes</span></button>
+      <button data-tab="ancestry" style="display:none"><span class="ic">🧬</span><span class="lbl">Ancestry</span></button>
       <button data-tab="admin" id="adminTabBtn" style="display:none"><span class="ic">⚙️</span><span class="lbl">Admin</span></button>
+      <button id="moreNavBtn"><span class="ic">☰</span><span class="lbl">More</span></button>
     </nav>
+  </div>
+
+  <!-- "More" tabs sheet -->
+  <div class="modalBg" id="moreModalBg">
+    <div class="modalSheet">
+      <h3 style="margin-top:0">☰ More</h3>
+      <div id="moreNavList">
+        <button class="moreNavRow" data-tab="calendar">🎂 Calendar</button>
+        <button class="moreNavRow" data-tab="stories">📖 Stories</button>
+        <button class="moreNavRow" data-tab="recipes">🍲 Recipes</button>
+        <button class="moreNavRow" data-tab="ancestry">🧬 Ancestry</button>
+        <button class="moreNavRow" data-tab="admin" id="moreAdminRow" style="display:none">⚙️ Admin</button>
+      </div>
+      <button class="btn secondary" id="moreCloseBtn" style="margin-top:14px">Close</button>
+    </div>
   </div>
 
   <!-- New Event modal -->
@@ -1511,7 +1535,9 @@ onAuthStateChanged(auth, (user) => {
     }
     show('shell');
     $('whoami').textContent = `${myDoc.name} · ${myDoc.role}`;
-    $('adminTabBtn').style.display = myDoc.role === 'admin' ? 'flex' : 'none';
+    // adminTabBtn itself stays permanently hidden now (moved into the More sheet) — only its
+    // row there toggles with role.
+    $('moreAdminRow').style.display = myDoc.role === 'admin' ? 'block' : 'none';
     applyWallVisibility();
     // Personal header filmstrip — every family member's own, not shared/admin-set (see
     // "PWA install"/theming history in CLAUDE.md for why this moved off config/appearance).
@@ -1554,10 +1580,17 @@ function cleanupListeners() {
 }
 
 // ---------- Tab nav ----------
+// Tabs collapsed into the "☰ More" sheet (see the nav.tabbar HTML comment) — the real button for
+// each still exists and switches panes exactly as before; this list is only used to light up the
+// More button itself when one of these is the active tab, so there's still SOME visual trace of
+// where you are instead of "More" looking identical whether you're on Calendar or Messages.
+const OVERFLOW_TABS = ['calendar', 'stories', 'recipes', 'ancestry', 'admin'];
+
 document.querySelectorAll('nav.tabbar button').forEach(btn => {
+  if (!btn.dataset.tab) return; // the "More" button itself — handled separately below
   btn.addEventListener('click', () => {
     document.querySelectorAll('nav.tabbar button').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
+    (OVERFLOW_TABS.includes(btn.dataset.tab) ? $('moreNavBtn') : btn).classList.add('active');
     btn.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
     document.querySelectorAll('.tabpane').forEach(p => p.classList.remove('active'));
     $('pane-' + btn.dataset.tab).classList.add('active');
@@ -1567,6 +1600,15 @@ document.querySelectorAll('nav.tabbar button').forEach(btn => {
   });
 });
 $('msgComposer').style.display = 'flex';
+
+$('moreNavBtn').onclick = () => $('moreModalBg').classList.add('open');
+$('moreCloseBtn').onclick = () => $('moreModalBg').classList.remove('open');
+document.querySelectorAll('.moreNavRow').forEach(row => {
+  row.onclick = () => {
+    document.querySelector(`nav.tabbar button[data-tab="${row.dataset.tab}"]`).click();
+    $('moreModalBg').classList.remove('open');
+  };
+});
 
 // ---------- Messages ----------
 function initChannels() {
