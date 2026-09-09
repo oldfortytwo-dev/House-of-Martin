@@ -582,11 +582,28 @@
         <div class="sub" id="whoami"></div>
       </div>
       <div style="display:flex; gap:8px">
+        <button class="btn secondary small" id="searchBtn" title="Search">🔍</button>
         <button class="btn secondary small" id="notifBtn" title="Notifications" style="position:relative">🔔<span class="notifBadge" id="notifBadge" style="display:none">0</span></button>
         <button class="btn secondary small" id="themeBtn" title="Theme">🎨</button>
         <button class="btn secondary small" id="signOutBtn">Sign out</button>
       </div>
     </header>
+
+    <!-- Full search — see initSearch() for scope: People/Households/Recipes/Calendar/Ancestry
+         search the data already loaded for other tabs (instant, no extra reads); Wall searches
+         the same recent-posts cache On This Day uses; Messages/DMs fetch each channel the
+         signed-in member actually has access to (Firestore has no full-text query, so this is a
+         one-time per-channel fetch + client-side filter) — DM privacy is inherent, not a filter
+         bolted on: dmChannels only ever contains channels this account is a real participant in. -->
+    <div class="modalBg" id="searchModalBg">
+      <div class="modalSheet">
+        <h3 style="margin-top:0">🔍 Search</h3>
+        <input type="text" id="searchInput" placeholder="Search people, messages, recipes, everything…" style="margin-bottom:10px">
+        <div class="hh" id="searchStatus"></div>
+        <div id="searchResults"></div>
+        <button class="btn secondary" id="searchCloseBtn" style="margin-top:14px">Close</button>
+      </div>
+    </div>
 
     <main>
       <!-- Messages -->
@@ -5204,6 +5221,117 @@ $('applyBirthdaysBtn').onclick = async () => {
   $('matchResults').innerHTML = '';
   $('applyBirthdaysBtn').style.display = 'none';
 };
+
+// ---------- Full Search ----------
+// People/Households/Recipes/Calendar/Ancestry/Wall all search data already loaded for their own
+// tabs — instant, zero extra Firestore reads. Messages/DMs are the exception: Firestore has no
+// full-text query at all, so this fetches each channel the signed-in member actually has access
+// to (once per search-modal session, cached) and filters client-side. DM privacy here isn't a
+// filter bolted on top — it's inherent, since dmChannels (from initDMs()) only ever contains
+// channels this account is a genuine participant in; there's no path to another person's DM.
+let _searchMsgCache = {};
+let _searchDebounceTimer = null;
+let _searchToken = 0; // bumped on every new search so a slow-to-resolve older search can't
+                       // clobber a newer one's results if they race
+
+function searchResultRow(icon, title, subtitle, onClick) {
+  const row = document.createElement('div');
+  row.className = 'contactRow';
+  row.style.cursor = 'pointer';
+  row.innerHTML = `<div class="nm">${icon} ${escapeHtml(title)}</div>${subtitle ? `<div class="info">${escapeHtml(subtitle)}</div>` : ''}`;
+  row.onclick = onClick;
+  return row;
+}
+function searchSectionHeader(label, count) {
+  const h = document.createElement('div');
+  h.className = 'hhHeader';
+  h.innerHTML = `<span>${label} (${count})</span>`;
+  return h;
+}
+function switchToTab(tab) { document.querySelector(`nav.tabbar button[data-tab="${tab}"]`).click(); }
+function closeSearch() { $('searchModalBg').classList.remove('open'); }
+
+async function runSearch(term) {
+  const myToken = ++_searchToken;
+  const q = term.trim().toLowerCase();
+  const wrap = $('searchResults');
+  wrap.innerHTML = '';
+  if (q.length < 2) { $('searchStatus').textContent = q.length ? 'Keep typing… (2+ characters)' : ''; return; }
+  $('searchStatus').textContent = 'Searching…';
+
+  const addSection = (label, rows) => { if (rows.length) { wrap.appendChild(searchSectionHeader(label, rows.length)); rows.forEach(r => wrap.appendChild(r)); } };
+
+  const peopleRows = [
+    ...allApprovedUsers.filter(u => (u.name || '').toLowerCase().includes(q)).slice(0, 10)
+      .map(u => searchResultRow('👤', u.name + (u.deceased ? ' 🕊' : ''), u.role === 'admin' ? 'Admin' : 'Member', () => { closeSearch(); openProfile(u.id); })),
+    ...familyContacts.filter(c => (c.name || '').toLowerCase().includes(q)).slice(0, 10)
+      .map(c => searchResultRow('👤', c.name + (c.deceased ? ' 🕊' : ''), 'No account', () => { closeSearch(); openContactDetail(c.id); })),
+  ];
+  addSection('People', peopleRows);
+
+  const hhRows = households.filter(h => (h.name || '').toLowerCase().includes(q)).slice(0, 10)
+    .map(h => searchResultRow('🏠', h.name, h.address || '', () => { closeSearch(); switchToTab('contacts'); }));
+  addSection('Households', hhRows);
+
+  const recipeRows = Object.values(recipesById).filter(r => (r.title || '').toLowerCase().includes(q) || (r.ingredients || '').toLowerCase().includes(q)).slice(0, 10)
+    .map(r => searchResultRow('🍲', r.title, '', () => { closeSearch(); switchToTab('recipes'); openRecipeDetail(r.id); }));
+  addSection('Recipes', recipeRows);
+
+  const occRows = occasions.filter(o => (o.name || '').toLowerCase().includes(q)).slice(0, 10)
+    .map(o => searchResultRow(occasionIcon(o), o.name, `${String(o.month).padStart(2, '0')}/${String(o.day).padStart(2, '0')}`, () => { closeSearch(); switchToTab('calendar'); }));
+  addSection('Calendar', occRows);
+
+  const ancRows = ancestryPeople.filter(p => (p.name || '').toLowerCase().includes(q) || (p.marriedName || '').toLowerCase().includes(q)).slice(0, 10)
+    .map(p => searchResultRow('🧬', p.name, ancestryYears(p), () => { closeSearch(); switchToTab('ancestry'); openAncestryDetail(p.id); }));
+  addSection('Ancestry', ancRows);
+
+  const wallRows = (_lastWallSnap ? _lastWallSnap.docs : []).filter(d => (d.data().text || '').toLowerCase().includes(q)).slice(0, 10)
+    .map(d => searchResultRow('🧱', d.data().authorName || 'Post', (d.data().text || '').slice(0, 60), () => { closeSearch(); switchToTab('photos'); }));
+  addSection('Wall', wallRows);
+
+  // ---- Messages — the one async, potentially-slow part; everything above renders instantly ----
+  const channelIds = new Set(['family']);
+  myHouseholds.forEach(hh => channelIds.add('hh_' + hh.id));
+  const myHhIdSet = new Set(myHouseholds.map(h => h.id));
+  branches.forEach(b => { if ((b.householdIds || []).some(id => myHhIdSet.has(id))) channelIds.add('br_' + b.id); });
+  dmChannels.forEach(dm => channelIds.add(dm.id));
+
+  const msgRows = [];
+  for (const cid of channelIds) {
+    if (!_searchMsgCache[cid]) {
+      try {
+        const snap = await getDocs(query(collection(db, 'channels', cid, 'messages'), limit(500)));
+        _searchMsgCache[cid] = snap.docs.map(d => d.data());
+      } catch (err) { _searchMsgCache[cid] = []; } // channel doesn't exist yet, or a transient read error — either way, just no results from it
+    }
+    if (myToken !== _searchToken) return; // a newer search started while this fetch was in flight
+    _searchMsgCache[cid].forEach(m => {
+      if ((m.text || '').toLowerCase().includes(q)) {
+        msgRows.push(searchResultRow('💬', m.senderName || 'Message', (m.text || '').slice(0, 60), () => { closeSearch(); openChannel(cid); }));
+      }
+    });
+  }
+  if (myToken !== _searchToken) return;
+  addSection('Messages', msgRows.slice(0, 15));
+
+  $('searchStatus').textContent = '';
+  if (!wrap.children.length) wrap.innerHTML = '<div class="empty">No results.</div>';
+}
+
+$('searchBtn').onclick = () => {
+  $('searchModalBg').classList.add('open');
+  $('searchInput').value = '';
+  $('searchResults').innerHTML = '';
+  $('searchStatus').textContent = '';
+  _searchMsgCache = {}; // fresh per session so results never go stale across separate searches
+  setTimeout(() => $('searchInput').focus(), 100);
+};
+$('searchCloseBtn').onclick = closeSearch;
+$('searchInput').addEventListener('input', (e) => {
+  clearTimeout(_searchDebounceTimer);
+  const val = e.target.value;
+  _searchDebounceTimer = setTimeout(() => runSearch(val), 300);
+});
 
 // ---------- Fill In Missing Death Dates from Ancestry ----------
 // #3 from the family-data review: contacts/{id}.deceased and users/{uid}.deceased mark SOMEONE as
